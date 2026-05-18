@@ -158,6 +158,8 @@ struct Sideband {
     uint8_t id;
     uint8_t user;
     uint8_t last;
+
+    uint8_t tag_sb; 
 };
 
 // ============================================================================
@@ -461,7 +463,7 @@ private:
     // communication fifo between CP_FE and Copy Unit
     sc_fifo_out<Request>  m_cp_wr_out;
     
-    void ProcessRVCWrRd(void);
+    void ProcessCPWrRd(void);
 
 public:
     CP_FE(sc_module_name module_name)
