@@ -692,86 +692,52 @@ void NIU_FE::ProcessNIURd(void)
     }
 }
 
-static uint32_t GetRvcDataBytes(uint8_t size)
-{
-    return 1U << size;
-}
-
-static uint8_t GetRvcCoreId(uint8_t id)
-{
-    return (id >> 4) & 0x7;
-}
-
-static uint8_t GetRvcTransId(uint8_t id)
-{
-    return id & 0xF;
-}
-
 void RVC_FE::ProcessRVCWr(void)
 {
     while (true)
     {
-        while (!m_rvs_tcm_aw_if.num_available() && !m_rvs_tcm_w_if.num_available())
-        {
+        while (!m_rvs_tcm_aw_if.num_available())
             wait();
-        }
 
-        if (!m_wr_buf.valid)
-        {
-            while (!m_rvs_tcm_aw_if.num_available())
-            {
-                wait();
+        IF_GEN::if_rvs_tcm_aw req_hdr;
+        m_rvs_tcm_aw_if.nb_read(req_hdr);
+
+        Sideband sb;
+        Request req_out;
+        sb.master_type = MASTER_RVC;
+        sb.addr = TCMAddress(req_hdr.addr);
+        sb.id = req_hdr.id;
+        if (req_hdr.atop == 1){
+            sb.op_type = OP_WRITE;
+            sb.data_len = 32;
+        }
+        else{
+            sb.op_type = OP_ATOMIC;
+            sb.atomic_type = req_hdr.atop;
+            if (req_hdr.size == 2){
+                sb.data_len = 4;
             }
-
-            m_rvs_tcm_aw_if.nb_read(m_wr_buf.aw);
-            m_wr_buf.valid = true;
+            else{
+                sb.data_len = 8;
+            }
         }
-
+        
         while (!m_rvs_tcm_w_if.num_available())
-        {
             wait();
-        }
 
-        IF_GEN::if_rvs_tcm_w req_data = {};
+        IF_GEN::if_rvs_tcm_w req_data;
         m_rvs_tcm_w_if.nb_read(req_data);
 
-        Sideband sb = {};
-        Payload pl = {};
-        Request req_out = {};
-
-        sb.debug_tag = m_wr_buf.aw.debug_tag;
-        sb.master_type = MASTER_RVC;
-        sb.op_type = (m_wr_buf.aw.atop == 0) ? OP_WRITE : OP_ATOMIC;
-        sb.addr = TCMAddress(m_wr_buf.aw.addr);
-        sb.data_len = GetRvcDataBytes(m_wr_buf.aw.size);
-        sb.burst = m_wr_buf.aw.burst;
-        sb.size = m_wr_buf.aw.size;
-        sb.burst_len = m_wr_buf.aw.len;
-        sb.id = m_wr_buf.aw.id;
-        sb.rvs_id = GetRvcCoreId(m_wr_buf.aw.id);
-        sb.instr_id = GetRvcTransId(m_wr_buf.aw.id);
-        sb.qos = m_wr_buf.aw.qos;
-        sb.atomic_type = static_cast<AtomicType>(m_wr_buf.aw.atop);
-        sb.last = req_data.last;
-
-        for (uint32_t u = 0; u < 8; u++)
-        {
+        Payload pl;
+        for (uint32_t u = 0; u < 8; u++){
             pl.data[u] = req_data.data[u];
         }
-        pl.mask[0] = req_data.strb;
-
-        uint32_t lane_idx = sb.addr.lane_index;
-        req_out.mask[lane_idx] = 1;
-        req_out.sideband = sb;
+        uint32_t bank_idx = sb.addr.bank_index;
+        pl.mask[bank_idx] = req_data.strb;
+        sb.instr_last = req_data.last;
         req_out.payload = pl;
-
+        req_out.sideband = sb;
         m_rvc_wr_out.write(req_out);
-
-        if (req_data.last)
-        {
-            m_wr_buf.valid = false;
-            m_wr_buf.aw = {};
-        }
     }
 }
 
@@ -788,9 +754,12 @@ void RVC_FE::ProcessRVCRd(void)
 
         m_rvs_tcm_ar_if.nb_read(req_in);
 
-        Sideband sb = {};
-        Payload pl = {};
-        Request req_out = {};
+        Sideband sb;
+        Payload pl;
+        Request req_out;
+        sb.master_type = MASTER_RVC;
+        sb.op_type = OP_READ;
+        
 
         sb.debug_tag = req_in.debug_tag;
         sb.master_type = MASTER_RVC;
@@ -930,6 +899,54 @@ void RVC_FE::ProcessRVCCfiReq(void)
             req_out.sideband = sb;
 
             m_rvc_cfi_out.write(req_out);
+        }
+    }
+}
+
+void CP_FE::ProcessCPWrRd(void)
+{
+    while (true)
+    {
+        while (!m_bif_cmd_if.num_available())
+            wait();
+
+        IF_GEN::if_bif_cmd req_hdr;
+        m_bif_cmd_if.nb_read(req_hdr);
+
+        Sideband sb;
+        Request req_out;
+        sb.master_type = MASTER_CP;
+        sb.addr = TCMAddress(req_hdr.address);
+        sb.burst_len = req_hdr.burst_length;
+        sb.tag_sb = req_hdr.tag_sb;
+        sb.data_len = 32;
+        if (req_hdr.operation == 1){
+            sb.op_type = OP_READ;
+            req_out.sideband = sb;
+            m_cp_wr_out.write(req_out);
+        }
+        else{
+            sb.op_type = OP_WRITE;
+            while (!m_bif_write_if.num_available())
+                wait();
+
+            IF_GEN::if_bif_write req_data;
+            m_bif_write_if.nb_read(req_data);
+
+            Payload pl;
+            for (uint32_t u = 0; u < 8; u++){
+                pl.data[u] = req_data.data[u];
+            }
+            for (uint32_t u = 0; u < 4; u++){
+                for (uint32_t i = 0; i < 8; i++){
+                    uint32_t val1 = (req_data.mask >> (31 - (u * 8 + i)) & 0x1);
+                    uint32_t val2 = val1 + val1 << 1 + val1 << 2 + val1 << 3;
+                    pl.mask[u] = pl.mask[u] << 4 + val2;
+                }
+            }
+            req_out.payload = pl;
+            req_out.sideband = sb;
+            m_cp_wr_out.write(req_out);
         }
     }
 }
