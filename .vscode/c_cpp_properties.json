@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/interfaces/**",
-                "${workspaceFolder}/interfaces/rvv/**"
+                "${workspaceFolder}/interfaces/rvv/**",
+                "C:\\Users\\innosilicon\\Downloads\\systemc-2.3.4\\src"
             ],
             "defines": [
                 "_DEBUG",
