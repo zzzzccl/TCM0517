@@ -48,6 +48,11 @@ const uint32_t NUM_DMA_TCM_WR_IF = 2;
 const uint32_t NUM_DMA_NOC_IF = 2;
 const uint32_t RVV_NUM = 4;
 
+const uint32_t BANK_ROW_NUM = 1024;
+const uint32_t BANK_LANE_NUM = 8;
+const uint32_t BANK_BANK_NUM = 4;
+const uint32_t BANK_BYTE_NUM = 256;
+
 // ============================================================================
 // 指令类型
 // ============================================================================
@@ -81,15 +86,36 @@ enum MasterType {
 // ============================================================================
 enum AtomicType {
     ATOM_NONE   = 0,
-    ATOM_SWAP   = 0x48,
-    ATOM_ADD    = 0x32,
-    ATOM_CLR    = 0x33,
-    ATOM_EOR    = 0x34,
-    ATOM_SET    = 0x35,
-    ATOM_SMAX   = 0x36,
-    ATOM_SMIN   = 0x37,
-    ATOM_UMAX   = 0x38,
-    ATOM_UMIN   = 0x39
+    ATOM_SWAP   = 0x30,
+    ATOM_ADD    = 0x20,
+    ATOM_CLR    = 0x21,
+    ATOM_EOR    = 0x22,
+    ATOM_SET    = 0x23,
+    ATOM_SMAX   = 0x24,
+    ATOM_SMIN   = 0x25,
+    ATOM_UMAX   = 0x26,
+    ATOM_UMIN   = 0x27
+};
+
+// ============================================================================
+// Acc instruction类型
+// ============================================================================
+enum AccInstrType {
+    BARRIER  = 0x8AB,
+    SEM_INIT = 0x1AB,
+    SEM_POST = 0x0AB,
+    SEM_WAIT = 0x2AB,
+    ACC_CFI  = 0xEAB
+};
+
+// ============================================================================
+// Barrier Group类型
+// ============================================================================
+enum BarrierGroupType {
+    PIM        = 0x0,
+    SINGLE_NPU = 0x1,
+    GROUP0     = 0x2,
+    GROUP1     = 0x3
 };
 
 // ============================================================================
@@ -134,6 +160,9 @@ struct Sideband {
     TCMAddress addr;
     uint32_t data_len; // bits
     uint32_t burst_len;
+    //barrier
+    uint8_t rvs_active_mask;
+    BarrierGroupType barrier_group;
     //sem
     uint8_t sem_num;
     uint8_t expect_value;
@@ -158,6 +187,8 @@ struct Sideband {
     uint8_t id;
     uint8_t user;
     uint8_t last;
+
+    uint8_t trans_id;
 
     uint8_t tag_sb; 
 };
@@ -356,13 +387,6 @@ class NIU_FE : public sc_module
     SC_HAS_PROCESS(NIU_FE);
 
 private:
-    struct BurstBuf {
-        uint32_t expect_len = 0;
-        uint32_t recv_len = 0;
-        Request req = {};
-    };
-
-    BurstBuf buf;
     // interface between NIU_FE and NIU
     rgx_fifo_interface<IF_GEN::if_niu_tcm_wr>     m_niu_tcm_wr_if;
     rgx_fifo_interface<IF_GEN::if_niu_tcm_wrdata> m_niu_tcm_wrdata_if;
@@ -373,14 +397,15 @@ private:
 
 
     // communication fifo between CP_FE and Copy Unit
-    sc_fifo_out<Request>  m_niu_wr_out(64);
-    sc_fifo_out<Request>  m_niu_rvc_wr_out;
-    sc_fifo_out<Request>  m_niu_rd_out(64);
-    sc_fifo_out<Request>  m_niu_rvc_rd_out;
+    sc_fifo<Request> m_wr_fifo(64);
+    sc_fifo<Request> m_rd_fifo(64);
+    sc_fifo_out<Request>  m_niu_wr_rd_out(64);
+    sc_fifo_out<Request>  m_niu_rvc_wr_rd_out;
     
 
     void ProcessNIUWr(void);
     void ProcessNIURd(void);
+    void ProcessNIURoundRobin(void);
 
 public:
     NIU_FE(sc_module_name module_name)
@@ -394,6 +419,7 @@ public:
                   << m_niu_tcm_wrdata_if.data_written_event();
         SC_THREAD(ProcessNIURd);
         sensitive << m_niu_tcm_rd_if.data_written_event();
+        SC_THREAD(ProcessNIURoundRobin); 
     }
 };
 
@@ -416,15 +442,18 @@ private:
 
 
     // communication fifo between CP_FE and Copy Unit
-    sc_fifo_out<Request>  m_rvc_wr_out;
+    sc_fifo<Request> m_wr_fifo;
+    sc_fifo<Request> m_rd_fifo;
+    sc_fifo_out<Request>  m_rvc_wr_rd_out;
     sc_fifo_out<Request>  m_rvc_acc_out;
     sc_fifo_out<Request>  m_rvc_barrier_cfi_out;
     
     void ProcessRVCWr(void);
     void ProcessRVCRd(void);
     void ProcessRVCAcc(void);
-    void ProcessRVCActive(void);
+    void ProcessRVCKick(void);
     void ProcessRVCCfi(void);
+    void ProcessRVCRoundRobin(void);
 
 public:
     RVC_FE(sc_module_name module_name)
@@ -443,10 +472,11 @@ public:
         sensitive << m_rvs_tcm_ar_if.data_written_event();
         SC_THREAD(ProcessRVCAcc);
         sensitive << m_acc_req_if.data_written_event();
-        SC_THREAD(ProcessRVCActive);
+        SC_THREAD(ProcessRVCKick);
         sensitive << m_rvs_tcm_kick_if.data_written_event();
         SC_THREAD(ProcessRVCCfi);
         sensitive << m_rvs_tcm_cfi_req_if.data_written_event();
+        SC_THREAD(ProcessRVCRoundRobin); 
     }
 };
 
@@ -474,6 +504,136 @@ public:
         SC_THREAD(ProcessRVCWrRd);
         sensitive << m_bif_cmd_if.data_written_event()
                   << m_bif_write_if.data_written_event();
+    }
+};
+
+class BANK : public sc_module
+{
+    SC_HAS_PROCESS(BANK);
+
+private:
+    struct InterfaceBuf {
+        bool valid = false;
+        Request  req = {};
+    };
+    struct BankBuf{
+        uint32_t ValidBufNum = 0;
+        InterfaceBuf ifbuf[16];
+    }
+    enum InterfaceType {
+        DMA_W0   = 0x0,
+        DMA_W1   = 0x1,
+        TC_B_R   = 0x2,
+        TC_MIX_R = 0x3,
+        DMA_R    = 0x4
+        AS_WR    = 0x5
+        TC_W     = 0x6
+        RVV0_R   = 0x7
+        RVV1_R   = 0x8
+        RVV2_R   = 0x9
+        RVV3_R   = 0xA
+        RVV0_W   = 0xB
+        RVV1_W   = 0xC
+        RVV2_W   = 0xD
+        RVV3_W   = 0xE
+        NIU_WR   = 0xF  
+    };
+    struct RVVNIUARB{
+        bool valid = false;
+        InterfaceType iftype = 0;
+    }
+    
+    BankBuf buf;
+    RVVNIUARB rvv_niu_arb_buf[3];
+
+    uint8_t lanemask[8] = {1,1,1,1,1,1,1,1};
+
+    uint8_t storage[BANK_ROW_NUM][BANK_LANE_NUM][BANK_BANK_NUM][BANK_BYTE_NUM];
+
+    uint8_t rr_rvv_w = 0;
+    uint8_t rr_rvv_r = 0;
+    uint8_t rr_rvv_niu = 0;
+    
+    // interface between FE and BANK
+    sc_fifo_in<Request> m_dma_wr0_in;
+    sc_fifo_in<Request> m_dma_wr1_in;
+    sc_fifo_in<Request> m_dma_rd_data_in;
+
+    sc_fifo_in<Request> m_tc_wr_in;
+    sc_fifo_in<Request> m_tc_rd0_in;
+    sc_fifo_in<Request> m_tc_rd1_in;
+
+    sc_fifo_in<Request> m_vlsu0_wr_in;
+    sc_fifo_in<Request> m_vlsu1_wr_in;
+    sc_fifo_in<Request> m_vlsu2_wr_in;
+    sc_fifo_in<Request> m_vlsu3_wr_in;
+    sc_fifo_in<Request> m_vlsu0_rd_in;
+    sc_fifo_in<Request> m_vlsu1_rd_in;
+    sc_fifo_in<Request> m_vlsu2_rd_in;
+    sc_fifo_in<Request> m_vlsu3_rd_in;
+
+    sc_fifo_in<Request> m_niu_wr_rd_in;
+
+    sc_fifo_in<Request> m_as_wr_rd_in;
+
+    // communication fifo between BANK and Copy BE
+    sc_fifo_out<Request>  m_dma_wr0_out;
+    sc_fifo_out<Request>  m_dma_wr1_out;
+    sc_fifo_out<Request>  m_dma_rd_data_out;
+
+    sc_fifo_out<Request>  m_tc_wr_out;
+    sc_fifo_out<Request>  m_tc_b_rd0_out;
+    sc_fifo_out<Request>  m_tc_b_rd1_out;
+    sc_fifo_out<Request>  m_tc_mix_rd_out;
+
+    sc_fifo_out<Request>  m_vlsu_wr_out;
+    sc_fifo_out<Request>  m_vlsu_rd_out;
+
+    sc_fifo_out<Request>  m_niu_wr_rd_out;
+
+    sc_fifo_out<Request>  m_as_rd_out;
+    
+    void ProcessBank(void);
+    void UpdateBank(void);
+    void ProcessBuf(void);
+    uint8_t LaneCheck(Request req);
+    Request BankWrRd(Request req);
+
+public:
+    TCM_BANK(sc_module_name module_name)
+    : sc_module(module_name)
+    , m_dma_wr0_in("dma_wr0_in")
+    , m_dma_wr1_in("dma_wr1_in")
+    , m_dma_rd_data_in("dma_rd_data_in")
+    , m_tc_wr_in("tc_wr_in")
+    , m_tc_rd0_in("tc_rd0_in")
+    , m_tc_rd1_in("tc_rd1_in")
+    , m_vlsu0_wr_in("vlsu0_wr_in")
+    , m_vlsu1_wr_in("vlsu1_wr_in")
+    , m_vlsu2_wr_in("vlsu2_wr_in")
+    , m_vlsu3_wr_in("vlsu3_wr_in")
+    , m_vlsu0_rd_in("vlsu0_rd_in")
+    , m_vlsu1_rd_in("vlsu1_rd_in")
+    , m_vlsu2_rd_in("vlsu2_rd_in")
+    , m_vlsu3_rd_in("vlsu3_rd_in")
+    , m_niu_wr_rd_in("niu_wr_rd_in")
+    {
+        SC_THREAD(ProcessBank);
+        sensitive << m_dma_wr0_in.data_written_event()
+                  << m_dma_wr1_in.data_written_event()
+                  << m_dma_rd_data_in.data_written_event()
+                  << m_tc_wr_in.data_written_event()
+                  << m_tc_rd0_in.data_written_event()
+                  << m_tc_rd1_in.data_written_event()
+                  << m_vlsu0_wr_in.data_written_event()
+                  << m_vlsu1_wr_in.data_written_event()
+                  << m_vlsu2_wr_in.data_written_event()
+                  << m_vlsu3_wr_in.data_written_event()
+                  << m_vlsu0_rd_in.data_written_event()
+                  << m_vlsu1_rd_in.data_written_event()
+                  << m_vlsu2_rd_in.data_written_event()
+                  << m_vlsu3_rd_in.data_written_event()
+                  << m_niu_wr_rd_in.data_written_event();
     }
 };
 

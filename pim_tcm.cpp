@@ -559,28 +559,26 @@ void NIU_FE::ProcessNIUWr(void)
 
         Sideband sb;
         sb.master_type = MASTER_NIU;
+        sb.id = req_hdr.id;
+        sb.user = req_hdr.user;
+        sb.addr = TCMAddress(req_hdr.addr);
 
         bool isSemPost = req_hdr.user & 0x1;
         if (isSemPost)
         {
             Request req_out;
             sb.op_type = OP_SEM_POST;
-            sb.addr = TCMAddress(req_hdr.addr);
             sb.sem_num = (req_hdr.user >> 1) & 0x3;
-            sb.user = req_hdr.user;
             req_out.sideband = sb;
 
-            m_niu_rvc_wr_out.write(req_out);
+            m_wr_fifo.write(req_out);
         }
         else{
-            buf.expect_len = req_hdr.len + 1;
-            buf.req.sideband.id = req_hdr.id;
-            buf.req.sideband.user = req_hdr.user;
-            buf.req.sideband.addr = TCMAddress(req_hdr.addr);
             if (req_hdr.atop == 0){
-                bool isNormalWr = (req_hdr.user >> 3 != 1);
+                uint32_t expect_len = req_hdr.len + 1;
+                uint32_t recv_len = 0;
                 sb.op_type = OP_WRITE;
-                while (buf.recv_len < buf.expect_len)
+                while (recv_len < expect_len)
                 {
                     while (!m_niu_tcm_wrdata_if.num_available())
                         wait();
@@ -597,22 +595,21 @@ void NIU_FE::ProcessNIUWr(void)
                     for (uint32_t u = 0; u < 4; u++){
                         pl.mask[u] = req_data.strb[u];
                     }
-                    buf.req.sideband.instr_last = req_data.last;
-                    TCMAddress beat_addr(buf.req.sideband.addr.raw + buf.recv_len * 128);
-                    req_out.payload = pl;
-                    req_out.sideband = buf.req.sideband;
-                    req_out.sideband.addr = beat_addr;
-
-                    if (isNormalWr){
-                        uint32_t lane_idx = beat_addr.lane_index;
-                        req_out.mask[lane_idx] = 1;
-                        m_niu_wr_out.write(req_out);
+                    sb.instr_last = req_data.last;
+                    TCMAddress beat_addr(sb.addr.raw + buf.recv_len * 128);
+                    
+                    if ((req_hdr.user >> 3) == 1){
+                        req_out.sideband.data_len = 128;
                     }
                     else{
-                        req_out.sideband.data_len = 128;
-                        m_niu_rvc_wr_out.write(req_out);
+                        uint32_t lane_idx = beat_addr.lane_index;
+                        req_out.mask[lane_idx] = 1;
                     }
-                    buf.recv_len++;
+                    req_out.payload = pl;
+                    req_out.sideband = sb;
+                    req_out.sideband.addr = beat_addr;
+                    m_wr_fifo.write(req_out);
+                    recv_len++;
                 }
             }
             else{
@@ -625,24 +622,20 @@ void NIU_FE::ProcessNIUWr(void)
 
                 Request req_out;
                 Payload pl;
-                buf.req.sideband.last = req_data.last;
-                buf.req.sideband.atomic_type = req_hdr.atop;
+                sb.atomic_type = req_hdr.atop;
                 if (req_hdr.len == 2){
-                    buf.req.sideband.data_len = 4;
+                    sb.data_len = 4;
                 }
                 else if(req_hdr.len == 3){
-                    buf.req.sideband.data_len = 8;
+                    sb.data_len = 8;
                 }
                 for (uint32_t u = 0; u < buf.req.sideband.data_len * 8; u++){
                     pl.data[u] = req_data.data[u];
                 }
                 req_out.payload = pl;
-                req_out.sideband = buf.req.sideband;
-                m_niu_rvc_wr_out.write(req_out);
+                req_out.sideband = sb;
+                m_wr_fifo.write(req_out);
             }
-            buf.expect_len = 0;
-            buf.recv_len = 0;
-            buf.req = {};
         }
     }
 }
@@ -665,6 +658,7 @@ void NIU_FE::ProcessNIURd(void)
         sb.op_type = OP_READ;
         sb.id = req_in.id;
         sb.user = req_in.user;
+        sb.data_len = 128;
         for(uint32_t u = 0; u < 4; u++)
         {
             pl.mask[u] = 0xFFFFFFFF;
@@ -681,14 +675,54 @@ void NIU_FE::ProcessNIURd(void)
             req_out.sideband = sb;
             req_out.payload = pl;
 
-            if ((req_in.user >> 3) == 1){
-                m_niu_rvc_rd_out.write(req_out);
-            }
-            else{
-                m_niu_rd_out.write(req_out);
-            }
+            m_rd_fifo.write(req_out);
             beat_num++;
         } 
+    }
+}
+
+void NIU_FE::ProcessNIURoundRobin(void)
+{
+    int rr = 0; // 0 = WR, 1 = RD
+
+    while (true)
+    {
+        // 等待至少有一个请求
+        while (m_wr_fifo.num_available() == 0 && m_rd_fifo.num_available() == 0)
+            wait();
+
+        Request req;
+        if (rr == 0 && m_wr_fifo.num_available()) {
+            m_wr_fifo.nb_read(req);
+            rr = 1;  // 下一次尝试 RD
+        }
+        else if (rr == 1 && m_rd_fifo.num_available()) {
+            m_rd_fifo.nb_read(req);
+            rr = 0;  // 下一次尝试 WR
+        }
+        else if (m_wr_fifo.num_available()) {  // 兜底
+            m_wr_fifo.nb_read(req);
+        }
+        else if (m_rd_fifo.num_available()) {
+            m_rd_fifo.nb_read(req);
+        }
+
+        // 下发到最终输出
+        if (req.sideband.op_type == OP_READ) {
+            if ((req.sideband.user >> 3) == 1)
+                m_niu_rvc_wr_rd_out.write(req);
+            else
+                m_niu_wr_rd_out.write(req);
+        }
+        else if (req.sideband.op_type == OP_WRITE) {
+            if ((req.sideband.user >> 3) == 1)
+                m_niu_rvc_wr_rd_out.write(req);
+            else
+                m_niu_wr_rd_out.write(req);
+        }
+        else{
+            m_niu_rvc_wr_rd_out.write(req);
+        }
     }
 }
 
@@ -737,7 +771,7 @@ void RVC_FE::ProcessRVCWr(void)
         sb.instr_last = req_data.last;
         req_out.payload = pl;
         req_out.sideband = sb;
-        m_rvc_wr_out.write(req_out);
+        m_wr_fifo.write(req_out);
     }
 }
 
@@ -759,30 +793,43 @@ void RVC_FE::ProcessRVCRd(void)
         Request req_out;
         sb.master_type = MASTER_RVC;
         sb.op_type = OP_READ;
-        
-
-        sb.debug_tag = req_in.debug_tag;
-        sb.master_type = MASTER_RVC;
-        sb.op_type = OP_READ;
-        sb.addr = TCMAddress(req_in.addr);
-        sb.data_len = GetRvcDataBytes(req_in.size);
-        sb.burst = req_in.burst;
-        sb.size = req_in.size;
-        sb.burst_len = req_in.len;
         sb.id = req_in.id;
-        sb.rvs_id = GetRvcCoreId(req_in.id);
-        sb.instr_id = GetRvcTransId(req_in.id);
-        sb.qos = req_in.qos;
         sb.last = 1;
+        sb.data_len = 32;
 
-        pl.mask[0] = 0xFFFFFFFF;
-
-        uint32_t lane_idx = sb.addr.lane_index;
-        req_out.mask[lane_idx] = 1;
         req_out.sideband = sb;
         req_out.payload = pl;
 
-        m_rvc_rd_out.write(req_out);
+        m_rd_fifo.write(req_out);
+    }
+}
+
+void RVC_FE::ProcessRVCRoundRobin(void)
+{
+    int rr = 0; // 0 = WR, 1 = RD
+
+    while (true)
+    {
+        // 等待至少有一个请求
+        while (m_wr_fifo.num_available() == 0 && m_rd_fifo.num_available() == 0)
+            wait();
+
+        Request req;
+        if (rr == 0 && m_wr_fifo.num_available()) {
+            m_wr_fifo.nb_read(req);
+            rr = 1;  // 下一次尝试 RD
+        }
+        else if (rr == 1 && m_rd_fifo.num_available()) {
+            m_rd_fifo.nb_read(req);
+            rr = 0;  // 下一次尝试 WR
+        }
+        else if (m_wr_fifo.num_available()) {  // 兜底
+            m_wr_fifo.nb_read(req);
+        }
+        else if (m_rd_fifo.num_available()) {
+            m_rd_fifo.nb_read(req);
+        }
+        m_rvc_wr_rd_out.write(req);
     }
 }
 
@@ -799,56 +846,43 @@ void RVC_FE::ProcessRVCAcc(void)
 
         m_acc_req_if.nb_read(req_in);
 
-        const uint32_t opcode = req_in.insn & 0xFFF;
         Sideband sb = {};
         Request req_out = {};
-
-        sb.debug_tag = req_in.debug_tag;
         sb.master_type = MASTER_RVC;
-        sb.instr_id = req_in.trans_id;
+        sb.trans_id = req_in.trans_id;
         sb.rvs_id = req_in.rvs_id;
-        sb.rvs_core_id = req_in.rvs_id;
-        sb.wakeup_mode = 1;
-
-        if (opcode == 0x8AB)
-        {
+        AccInstrType op_type = req_in.insn & 0xFFF;
+        if (op_type == BARRIER){
             sb.op_type = OP_BARRIER_PROC;
-            sb.grp_mask = (req_in.insn >> 17) & 0x3;
+            sb.barrier_group = (req_in.insn >> 17) & 0x3;
             req_out.sideband = sb;
-            m_rvc_barrier_out.write(req_out);
+            m_rvc_barrier_cfi_out.write(req_out);
         }
-        else if (opcode == 0x1AB)
-        {
+        else if (op_type == SEM_INIT){
             sb.op_type = OP_SEM_INIT;
-            sb.addr = TCMAddress(static_cast<uint32_t>(req_in.rs1 & 0x1FFFFF));
             sb.sem_num = (req_in.insn >> 27) & 0x3;
             sb.expect_value = (req_in.insn >> 17) & 0x3FF;
+            sb.addr = TCMAddress(req_in.rs1 & 0x1FFFFF);
             req_out.sideband = sb;
-            m_rvc_sem_out.write(req_out);
+            m_rvc_acc_out.write(req_out);
         }
-        else if (opcode == 0x0AB)
-        {
+        else if (op_type == SEM_POST){
             sb.op_type = OP_SEM_POST;
-            sb.addr = TCMAddress(static_cast<uint32_t>(req_in.rs1 & 0xFFFFFFFF));
             sb.sem_num = (req_in.insn >> 19) & 0x3;
-            sb.op = (req_in.insn >> 17) & 0x3;
+            sb.addr = TCMAddress(req_in.rs1 & 0xFFFFFFFFFFFFFFFF);
             req_out.sideband = sb;
-            m_rvc_sem_out.write(req_out);
+            m_rvc_acc_out.write(req_out);
         }
-        else if (opcode == 0x2AB)
-        {
+        else if (op_type == SEM_WAIT){
             sb.op_type = OP_SEM_WAIT;
-            sb.addr = TCMAddress(static_cast<uint32_t>(req_in.rs1 & 0x1FFFFF));
-            sb.wait_core_id = req_in.rvs_id;
+            sb.addr = TCMAddress(req_in.rs1 & 0x1FFFFF);
             req_out.sideband = sb;
-            m_rvc_sem_out.write(req_out);
+            m_rvc_acc_out.write(req_out);
         }
-        else if (opcode == 0xEAB)
-        {
+        else if (op_type == ACC_CFI){
             sb.op_type = OP_CFI;
-            sb.user = (req_in.insn >> 12) & 0xF;
             req_out.sideband = sb;
-            m_rvc_cfi_out.write(req_out);
+            m_rvc_barrier_cfi_out.write(req_out);
         }
     }
 }
@@ -866,14 +900,14 @@ void RVC_FE::ProcessRVCKick(void)
 
         m_rvs_tcm_kick_if.nb_read(req_in);
 
-        Sideband sb = {};
-        Request req_out = {};
-        sb.debug_tag = req_in.debug_tag;
+        Sideband sb;
+        Request req_out;
         sb.master_type = MASTER_RVC;
+        sb.op_type = OP_BARRIER_INIT;
         sb.rvs_active_mask = req_in.rvs_active_mask;
         req_out.sideband = sb;
 
-        m_rvc_kick_out.write(req_out);
+        m_rvc_barrier_cfi_out.write(req_out);
     }
 }
 
@@ -891,14 +925,13 @@ void RVC_FE::ProcessRVCCfiReq(void)
         m_rvs_tcm_cfi_req_if.nb_read(req_in);
         if (req_in.valid)
         {
-            Sideband sb = {};
-            Request req_out = {};
-            sb.debug_tag = req_in.debug_tag;
+            Sideband sb;
+            Request req_out;
             sb.master_type = MASTER_RVC;
             sb.op_type = OP_CFI;
             req_out.sideband = sb;
 
-            m_rvc_cfi_out.write(req_out);
+            m_rvc_barrier_cfi_out.write(req_out);
         }
     }
 }
@@ -950,5 +983,308 @@ void CP_FE::ProcessCPWrRd(void)
         }
     }
 }
+
+void BANK::UpdateBuf(void)
+{
+    if (buf.ifbuf[DMA_W0].valid == false && m_dma_wr0_in.num_available()){
+        buf.ifbuf[DMA_W0].valid = true;
+        m_dma_wr0_in.nb_read(buf.ifbuf[DMA_W0].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[DMA_W1].valid == false && m_dma_wr1_in.num_available()){
+        buf.ifbuf[DMA_W1].valid = true;
+        m_dma_wr1_in.nb_read(buf.ifbuf[DMA_W1].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[TC_B_R].valid == false && m_tc_rd0_in.num_available()){
+        buf.ifbuf[TC_B_R].valid = true;
+        m_tc_rd0_in.nb_read(buf.ifbuf[TC_B_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[TC_MIX_R].valid == false && m_tc_rd1_in.num_available()){
+        buf.ifbuf[TC_MIX_R].valid = true;
+        m_tc_rd1_in.nb_read(buf.ifbuf[TC_MIX_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[DMA_R].valid == false && m_dma_rd_data_in.num_available()){
+        buf.ifbuf[DMA_R].valid = true;
+        m_dma_rd_data_in.nb_read(buf.ifbuf[DMA_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[AS_WR].valid == false && m_as_wr_rd_in.num_available()){
+        buf.ifbuf[AS_WR].valid = true;
+        m_as_wr_rd_in.nb_read(buf.ifbuf[AS_WR].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[TC_W].valid == false && m_tc_wr_in.num_available()){
+        buf.ifbuf[TC_W].valid = true;
+        m_tc_wr_in.nb_read(buf.ifbuf[TC_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV0_R].valid == false && m_vlsu0_rd_in.num_available()){
+        buf.ifbuf[RVV0_R].valid = true;
+        m_vlsu0_rd_in.nb_read(buf.ifbuf[RVV0_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV1_R].valid == false && m_vlsu1_rd_in.num_available()){
+        buf.ifbuf[RVV1_R].valid = true;
+        m_vlsu1_rd_in.nb_read(buf.ifbuf[RVV1_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV2_R].valid == false && m_vlsu2_rd_in.num_available()){
+        buf.ifbuf[RVV2_R].valid = true;
+        m_vlsu2_rd_in.nb_read(buf.ifbuf[RVV2_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV3_R].valid == false && m_vlsu3_rd_in.num_available()){
+        buf.ifbuf[RVV3_R].valid = true;
+        m_vlsu3_rd_in.nb_read(buf.ifbuf[RVV3_R].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV0_W].valid == false && m_vlsu0_wr_in.num_available()){
+        buf.ifbuf[RVV0_W].valid = true;
+        m_vlsu0_wr_in.nb_read(buf.ifbuf[RVV0_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV1_W].valid == false && m_vlsu1_wr_in.num_available()){
+        buf.ifbuf[RVV1_W].valid = true;
+        m_vlsu1_wr_in.nb_read(buf.ifbuf[RVV1_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV2_W].valid == false && m_vlsu2_wr_in.num_available()){
+        buf.ifbuf[RVV2_W].valid = true;
+        m_vlsu2_wr_in.nb_read(buf.ifbuf[RVV2_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV3_W].valid == false && m_vlsu3_wr_in.num_available()){
+        buf.ifbuf[RVV3_W].valid = true;
+        m_vlsu3_wr_in.nb_read(buf.ifbuf[RVV3_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[NIU_WR].valid == false && m_niu_wr_rd_in.num_available()){
+        buf.ifbuf[NIU_WR].valid = true;
+        m_niu_wr_rd_in.nb_read(buf.ifbuf[NIU_WR].req);
+        buf.ValidBufNum++;
+    }
+}
+
+void BANK::ProcessBuf(void)
+{
+    if (buf.ifbuf[DMA_W0].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W0].req);
+        if (lane_idx != -1){
+            Request req_out = BankWrRd(buf.ifbuf[DMA_W0].req);
+            m_dma_wr0_out.write(req_out);
+            
+            buf.ifbuf[DMA_W0].valid = false;
+            buf.ifbuf[DMA_W0].req = {};
+            buf.ValidBufNum--;
+        }
+    }
+    if (buf.ifbuf[DMA_W1].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W1].req);
+        if (lane_idx != -1){
+            Request req_out = BankWrRd(buf.ifbuf[DMA_W1].req);
+            m_dma_wr1_out.write(req_out);
+            
+            buf.ifbuf[DMA_W1].valid = false;
+            buf.ifbuf[DMA_W1].req = {};
+            buf.ValidBufNum--;
+        }
+    }
+    if (buf.ifbuf[TC_B_R].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_B_R].req);
+        if (lane_idx != -1){
+            Request req_in = buf.ifbuf[TC_B_R].req;
+            req_in.sideband.addr.lane_index = lane_idx;
+            req_in.sideband.addr.update_raw_addr();
+            Request req_out = BankWrRd(req_in);
+            m_tc_b_rd0_out.write(req_out);
+
+            buf.ifbuf[TC_B_R].req.mask[lane_idx] = 0;
+            bool isEmpty = true;
+            for (uint32_t u = 0; u < 8; u++){
+                if (buf.ifbuf[TC_B_R].req.mask[u] == 1){
+                    isEmpty = false;
+                }
+            }
+
+            if (!isEmpty){
+                lane_idx = LaneCheck(buf.ifbuf[TC_B_R].req);
+                if (lane_idx != -1){
+                    req_in = buf.ifbuf[TC_B_R].req;
+                    req_in.sideband.addr.lane_index = lane_idx;
+                    req_in.sideband.addr.update_raw_addr();
+                    req_out = BankWrRd(req_in);
+                    m_tc_b_rd1_out.write(req_out);
+
+                    buf.ifbuf[TC_B_R].req.mask[lane_idx] = 0;
+                    isEmpty = true;
+                    for (uint32_t u = 0; u < 8; u++){
+                        if (buf.ifbuf[TC_B_R].req.mask[u] == 1){
+                            isEmpty = false;
+                        }
+                    }
+                }
+            }
+            if (isEmpty){
+                buf.ifbuf[TC_B_R].valid = false;
+                buf.ifbuf[TC_B_R].req = {};
+                buf.ValidBufNum--;
+            }
+        }
+    }
+    if (buf.ifbuf[TC_MIX_R].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_MIX_R].req);
+        if (lane_idx != -1){
+            Request req_in = buf.ifbuf[TC_MIX_R].req;
+            req_in.sideband.addr.lane_index = lane_idx;
+            req_in.sideband.addr.update_raw_addr();
+            Request req_out = BankWrRd(req_in);
+            m_tc_mix_rd_out.write(req_out);
+
+            buf.ifbuf[TC_MIX_R].req.mask[lane_idx] = 0;
+            bool isEmpty = true;
+            for (uint32_t u = 0; u < 8; u++){
+                if (buf.ifbuf[TC_MIX_R].req.mask[u] == 1){
+                    isEmpty = false;
+                }
+            }
+            if (isEmpty){
+                buf.ifbuf[TC_MIX_R].valid = false;
+                buf.ifbuf[TC_MIX_R].req = {};
+                buf.ValidBufNum--;
+            }
+        }
+    }
+    if (buf.ifbuf[DMA_R].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_R].req);
+        if (lane_idx != -1){
+            Request req_in = buf.ifbuf[DMA_R].req;
+            req_in.sideband.addr.lane_index = lane_idx;
+            req_in.sideband.addr.update_raw_addr();
+            Request req_out = BankWrRd(req_in);
+            m_dma_rd_data_out.write(req_out);
+
+            buf.ifbuf[DMA_R].req.mask[lane_idx] = 0;
+            bool isEmpty = true;
+            for (uint32_t u = 0; u < 8; u++){
+                if (buf.ifbuf[DMA_R].req.mask[u] == 1){
+                    isEmpty = false;
+                }
+            }
+            if (isEmpty){
+                buf.ifbuf[DMA_R].valid = false;
+                buf.ifbuf[DMA_R].req = {};
+                buf.ValidBufNum--;
+            }
+        }
+    }
+    if (buf.ifbuf[AS_WR].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[AS_WR].req);
+        if (lane_idx != -1){
+            Request req_out = BankWrRd(buf.ifbuf[AS_WR].req);
+            if (req_out.sideband.op_type == OP_READ){
+                m_as_rd_out.write(req_out);
+            }
+            buf.ifbuf[AS_WR].valid = false;
+            buf.ifbuf[AS_WR].req = {};
+            buf.ValidBufNum--;
+        }
+    }
+    if (buf.ifbuf[TC_W].valid){
+        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_W].req);
+        if (lane_idx != -1){
+            Request req_out = BankWrRd(buf.ifbuf[TC_W].req);
+            m_tc_wr_out.write(req_out);
+            
+            buf.ifbuf[TC_W].valid = false;
+            buf.ifbuf[TC_W].req = {};
+            buf.ValidBufNum--;
+        }
+    }
+
+
+
+    if (buf.ifbuf[RVV0_R].valid || buf.ifbuf[RVV1_R].valid || buf.ifbuf[RVV1_R].valid || buf.ifbuf[RVV1_R].valid){
+        for (uint32_t u = 0; u < 4; u++){
+            InterfaceType iftype_tmp = RVV0_R + rr_rvv_r;
+            rr_rvv_r = (rr_rvv_r + 1) % 4;
+            uint8_t lane_idx = LaneCheck(buf.ifbuf[iftype_tmp].req);
+            if (lane_idx != -1){
+                rvv_niu_arb_buf[0].valid = true;
+                rvv_niu_arb_buf[0].iftype = iftype_tmp;
+                break;
+            }
+        }
+    }
+    
+    if (buf.ifbuf[RVV0_W].valid == false && m_vlsu0_wr_in.num_available()){
+        buf.ifbuf[RVV0_W].valid = true;
+        m_vlsu0_wr_in.nb_read(buf.ifbuf[RVV0_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV1_W].valid == false && m_vlsu1_wr_in.num_available()){
+        buf.ifbuf[RVV1_W].valid = true;
+        m_vlsu1_wr_in.nb_read(buf.ifbuf[RVV1_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV2_W].valid == false && m_vlsu2_wr_in.num_available()){
+        buf.ifbuf[RVV2_W].valid = true;
+        m_vlsu2_wr_in.nb_read(buf.ifbuf[RVV2_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[RVV3_W].valid == false && m_vlsu3_wr_in.num_available()){
+        buf.ifbuf[RVV3_W].valid = true;
+        m_vlsu3_wr_in.nb_read(buf.ifbuf[RVV3_W].req);
+        buf.ValidBufNum++;
+    }
+    if (buf.ifbuf[NIU_WR].valid == false && m_niu_wr_rd_in.num_available()){
+        buf.ifbuf[NIU_WR].valid = true;
+        m_niu_wr_rd_in.nb_read(buf.ifbuf[NIU_WR].req);
+        buf.ValidBufNum++;
+    }
+}
+
+
+
+uint8_t BANK::LaneCheck(Request req)
+{
+
+}
+
+Request Bank::BankWrRd(Request req)
+{
+
+}
+
+void BANK::ProcessBank(void)
+{
+
+    while (true)
+    {
+        UpdateBuf();
+        if (buf.ValidBufNum == 0)
+        {
+            wait();
+        }
+        else{
+            ProcessBuf();
+        }
+
+        m_rvs_tcm_cfi_req_if.nb_read(req_in);
+        if (req_in.valid)
+        {
+            Sideband sb;
+            Request req_out;
+            sb.master_type = MASTER_RVC;
+            sb.op_type = OP_CFI;
+            req_out.sideband = sb;
+
+            m_rvc_barrier_cfi_out.write(req_out);
+        }
+    }
+}
+
 
 }
