@@ -35,7 +35,6 @@ struct if_dma_tcm_wr_req
        2: Sem.post instruction.
     */
     uint8_t op         : 2; // 0: RVS write; 1: CP write; 2: Sem post
-    uint8_t rvs_id     : 3; // Scalar Core id
     
 
     /**
@@ -68,7 +67,6 @@ struct if_dma_tcm_wr_req
         }
 
         outfile << " (op) = 0x"         << std::hex << op;
-        outfile << " (rvs_id) = 0x"     << std::hex << rvs_id;
 
         if(op == 0 || op == 1)
         {
@@ -103,7 +101,6 @@ struct if_dma_tcm_wr_req
         os.flags(std::ios::hex | std::ios::right | std::ios::uppercase);
 
         os << req.op << " ";
-        os << req.rvs_id << " ";
 
         if(req.op == 0 || req.op == 1)
         {

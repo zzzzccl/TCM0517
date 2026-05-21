@@ -22,7 +22,7 @@ struct if_bif_write
         outfile << " (mask) = 0x" << std::hex << mask;
         for (uint32_t u = 0; u < 8; u++)
         {
-            outfile << " (data_st" << u << ") = 0x" << std::hex << data_st[u];
+            outfile << " (data" << u << ") = 0x" << std::hex << data[u];
         }
         outfile << std::endl;
     }
@@ -34,7 +34,7 @@ struct if_bif_write
         os << req.mask << " ";
         for (uint32_t u = 0; u < 8; u++)
         {
-            os << req.data_st[u] << " ";
+            os << req.data[u] << " ";
         }
 
         return os;
