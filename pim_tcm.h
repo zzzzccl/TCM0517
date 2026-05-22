@@ -41,6 +41,7 @@
 
 #include <queue>
 #include <bitset>
+#include <mutex>
 
 namespace pim_tcm
 {
@@ -81,7 +82,9 @@ enum MasterType {
     MASTER_RVV3 = 5,
     MASTER_NIU  = 6,
     MASTER_RVC  = 7,
-    MASTER_CP   = 8
+    MASTER_CP   = 8,
+    MASTER_AS   = 9,
+    MASTER_BANK = 10
 };
 
 // ============================================================================
@@ -177,6 +180,8 @@ struct Sideband {
     uint8_t wait_core_id;
     //atomic
     AtomicType atomic_type;
+    //cacheline
+    uint32_t way_idx;
     //others
     uint8_t instr_last;
     uint8_t instr_id;
@@ -835,7 +840,7 @@ private:
     sc_fifo_out<Request>  m_as_rd_out;
     
     void ProcessBank(void);
-    void UpdateBank(void);
+    void UpdateBankBuf(void);
     void ProcessBuf(void);
     uint8_t LaneCheck(Request req);
     Request BankWrRd(Request req);
@@ -875,6 +880,172 @@ public:
                   << m_vlsu2_rd_in.data_written_event()
                   << m_vlsu3_rd_in.data_written_event()
                   << m_niu_wr_rd_in.data_written_event();
+    }
+};
+
+class AS_PIPE : public sc_module
+{
+    SC_HAS_PROCESS(AS_PIPE);
+
+private:
+    // 信号量结构
+    struct SemVal {
+        uint64_t raw;
+        uint32_t wait         : 1;  // [0:0]
+        uint32_t expect_value : 16; // [16:1]
+        uint32_t post_value   : 16; // [32:17]
+        uint32_t wait_core_id : 16; // [48:33]
+        uint64_t reserved     : 15; // [63:49]
+        
+        SemVal(uint64_t val = 0) : raw(val) {
+            wait         = (val >> 0)  & 0x1;
+            expect_value = (val >> 1)  & 0xFFFF;
+            post_value   = (val >> 17) & 0xFFFF;
+            wait_core_id = (val >> 33) & 0xFFFF;
+            reserved     = (val >> 49);
+        }
+
+        void update_raw_val() {
+            raw = (uint64_t(wait)         << 0)
+                + (uint64_t(expect_value) << 1)
+                + (uint64_t(post_value)   << 17)
+                + (uint64_t(wait_core_id) << 33)
+                + (uint64_t(reserved)     << 49);
+        }
+    };
+
+    struct CacheLine{
+        bool tag_vld = 0;
+        uint32_t tag_tag = 0;
+        uint32_t tag_age_cnt = 0;
+        bool cl_rdy = 0;
+        bool cl_dirty = 0;
+        uint32_t cl_miss_ref_cnt = 0;
+        uint32_t data[BANK_BANK_NUM * BANK_BYTE_NUM / 32] = {};
+        uint32_t cl_mask [BANK_BANK_NUM * BANK_BYTE_NUM / 32] = {};
+
+        void reset(){
+            tag_vld = 0;
+            tag_tag = 0;
+            tag_age_cnt = 0;
+            cl_rdy = 0;
+            cl_dirty = 0;
+            cl_miss_ref_cnt = 0;
+            memset(data, 0, sizeof(data));
+            memset(cl_mask, 0, sizeof(cl_mask));
+        }
+    };
+
+    enum CacheReplaceType{
+        EMPTY  = 0x0,
+        UNLOCK = 0x1
+    };
+
+    CacheLine cache[8];
+    
+    std::queue<Request> hit_q;
+    std::queue<Request> miss_q;
+
+    uint8_t plsu_n[3][4] = {};
+ 
+    // interface among AS_PIPE, bank and MASKTER_FE
+    sc_fifo_in<Request> m_dma_rd_desc_in;
+    sc_fifo_in<Request> m_dma_sem_in;
+
+    sc_fifo_in<Request> m_tc_sem_in;
+
+    sc_fifo_in<Request> m_vlsu0_sem_in;
+    sc_fifo_in<Request> m_vlsu1_sem_in;
+    sc_fifo_in<Request> m_vlsu2_sem_in;
+    sc_fifo_in<Request> m_vlsu3_sem_in;
+    
+    sc_fifo_in<Request> m_niu_rvc_wr_rd_in;
+
+    sc_fifo_in<Request>  m_rvc_wr_rd_in;
+    sc_fifo_in<Request>  m_rvc_acc_in;
+    sc_fifo_in<Request>  m_rvc_barrier_cfi_in;
+
+    sc_fifo_in<Request> m_cp_wr_in;
+
+    sc_fifo_in<Request> m_bank_wr_in;
+
+    // AS internal interface
+    sc_fifo<Request> m_niu_sem;
+    sc_fifo<Request> m_arb2_out;
+    sc_fifo<Request> m_arb1_out;
+    sc_fifo<Request> m_arb3_out;
+    sc_fifo<Request> m_cfi_out;
+    sc_fifo<Request> m_q_arb_out;
+
+    // communication fifo among as_pipe, bank and MASTER_BE
+    sc_fifo_out<Request>  m_as_wr_rd_out;
+
+    sc_fifo_out<Request>  m_dma_rd_desc_out;
+
+    sc_fifo_out<Request>  m_as_niu_wr_rd_out;
+
+    sc_fifo_out<Request>  m_as_rvc_out;
+    sc_fifo_out<Request> m_as_cfi_out;
+
+    sc_fifo_out<Request>  m_as_cp_out;
+    
+    void ProcessArb2(void);
+    void ProcessArb1(void);
+    void ProcessArb3(void);
+    void HitTest(void);
+    int PLSU(CacheReplaceType repl_type);
+    void ProcessCacheArb(void);
+    void ProcessCache(void);
+    void ProcessSem(Request req);
+    void ProcessAtomic(Request req);
+    Request CacheWrRd(Request req);
+
+public:
+    AS_PIPE(sc_module_name module_name)
+    : sc_module(module_name)
+    , m_dma_rd_desc_in("dma_rd_desc_in")
+    , m_dma_sem_in("dma_sem_in")
+    , m_tc_sem_in("tc_sem_in")
+    , m_vlsu0_sem_in("vlsu0_sem_in")
+    , m_vlsu1_sem_in("vlsu1_sem_in")
+    , m_vlsu2_sem_in("vlsu2_sem_in")
+    , m_vlsu3_sem_in("vlsu3_sem_in")
+    , m_niu_rvc_wr_rd_in("niu_rvc_wr_rd_in")
+    , m_rvc_wr_rd_in("rvc_wr_rd_in")
+    , m_rvc_acc_in("rvc_acc_in")
+    , m_rvc_barrier_cfi_in("rvc_barrier_cfi_in")
+    , m_cp_wr_in("cp_wr_in")
+    , m_bank_wr_in("bank_wr_in")
+    , m_niu_sem("niu_sem")
+    , m_arb2_out("arb2_out")
+    , m_arb1_out("arb1_out")
+    , m_arb3_out("arb3_out")
+    , m_cfi_out("cfi_out")
+    , m_q_arb_out("q_arb_out")
+    {
+        SC_THREAD(ProcessArb2);
+        sensitive << m_dma_rd_desc_in.data_written_event()
+                  << m_niu_rvc_wr_rd_in.data_written_event()
+                  << m_rvc_wr_rd_in.data_written_event()
+                  << m_rvc_acc_in.data_written_event()
+                  << m_cp_wr_in.data_written_event();
+        SC_THREAD(ProcessArb1);
+        sensitive << m_niu_sem.data_written_event()
+                  << m_vlsu0_sem_in.data_written_event()
+                  << m_vlsu1_sem_in.data_written_event()
+                  << m_vlsu2_sem_in.data_written_event()
+                  << m_vlsu3_sem_in.data_written_event()
+                  << m_tc_sem_in.data_written_event()
+                  << m_dma_sem_in.data_written_event();
+        SC_THREAD(ProcessArb3);
+        sensitive << m_arb2_out.data_written_event()
+                  << m_arb1_out.data_written_event();
+        SC_THREAD(HitTest);
+        sensitive << m_arb3_out.data_written_event()
+                  << m_cfi_out.data_written_event();
+        SC_THREAD(ProcessCacheArb);
+        SC_THREAD(ProcessCache);
+        sensitive << m_q_arb_out.data_written_event();
     }
 };
 
