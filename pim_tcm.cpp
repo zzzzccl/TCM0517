@@ -1696,7 +1696,9 @@ void BANK::ProcessBuf(void)
         uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W0].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[DMA_W0].req);
-            m_dma_wr0_out.write(req_out);
+            if (buf.ifbuf[DMA_W0].req.sideband.instr_last == 1){
+                m_dma_wr0_out.write(req_out);
+            }
             
             buf.ifbuf[DMA_W0].valid = false;
             buf.ifbuf[DMA_W0].req = {};
@@ -1707,7 +1709,9 @@ void BANK::ProcessBuf(void)
         uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W1].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[DMA_W1].req);
-            m_dma_wr1_out.write(req_out);
+            if (buf.ifbuf[DMA_W1].req.sideband.instr_last == 1){
+                m_dma_wr1_out.write(req_out);
+            }
             
             buf.ifbuf[DMA_W1].valid = false;
             buf.ifbuf[DMA_W1].req = {};
@@ -1879,7 +1883,9 @@ void BANK::ProcessBuf(void)
         uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_W].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[TC_W].req);
-            m_tc_wr_out.write(req_out);
+            if (buf.ifbuf[TC_W].req.sideband.instr_last == 1){
+                m_tc_wr_out.write(req_out);
+            }
             
             buf.ifbuf[TC_W].valid = false;
             buf.ifbuf[TC_W].req = {};
@@ -1993,7 +1999,9 @@ void BANK::ProcessBuf(void)
                     m_vlsu_wr_out.write(req_out);
                 }
                 else{
-                    m_niu_wr_rd_out.write(req_out);
+                    if (buf.ifbuf[rvv_niu_arb_buf[u].iftype].req.sideband.instr_last == 1){
+                        m_niu_wr_rd_out.write(req_out);
+                    }
                 }
                 
                 buf.ifbuf[rvv_niu_arb_buf[u].iftype].valid = false;
@@ -2020,7 +2028,6 @@ uint8_t BANK::LaneCheck(Request req)
 
 Request BANK::BankWrRd(Request req)
 {
-
     if (req.sideband.op_type == OP_WRITE){
         for (uint32_t bank_idx = 0; bank_idx < 4; bank_idx++){
             for (uint32_t u = 0; u < 8; u++){
@@ -2216,12 +2223,12 @@ void AS_PIPE::HitTest(void)
         }
         
         if (m_cfi_out.num_available()){
-            uint32_t a = 1;
+            // 补充cfi
         }
         else{
             m_arb3_out.nb_read(req_in);
             if (req_in.sideband.op_type == OP_CFI){
-
+                // 补充cfi
             }
             else{
                 std::queue<Request> fifo_tmp;
@@ -2257,6 +2264,7 @@ void AS_PIPE::HitTest(void)
                 else{
                     fifo_tmp.push(req_in);
                 }
+                // push in hit_q and miss_q
                 while (!fifo_tmp.empty()){
                     Request req_tmp = fifo_tmp.pop();
                     uint32_t tag = req_tmp.sideband.addr.get_cache_tag();
@@ -2266,12 +2274,12 @@ void AS_PIPE::HitTest(void)
                             req_tmp.sideband.way_idx = u;
                             if (cache[u].cl_rdy == 1){ // hit
                                 hit_q.push(req_tmp);
-                                tag_age_cnt++;
+                                cache[u].tag_age_cnt++;
                             }
                             else{ // hit on miss
                                 miss_q.push(req_tmp);
-                                tag_age_cnt++;
-                                cl_miss_ref_cnt++;
+                                cache[u].tag_age_cnt++;
+                                cache[u].cl_miss_ref_cnt++;
                             }
                             isFindCacheline = true;
                             break;
@@ -2319,9 +2327,9 @@ void AS_PIPE::HitTest(void)
                         req_tmp.sideband.way_idx = way_idx;
                         miss_q.push(req_tmp);
                         cache[way_idx].tag_vld = 1;
-                        uint32_t tag_tag = tag;
-                        uint32_t tag_age_cnt = 1;
-                        uint32_t cl_miss_ref_cnt = 1;
+                        cache[way_idx].tag_tag = tag;
+                        cache[way_idx].tag_age_cnt = 1;
+                        cache[way_idx].cl_miss_ref_cnt = 1;
                     }
                 }
             }
@@ -2345,12 +2353,16 @@ void AS_PIPE::ProcessCacheArb(void)
             IsFindOut = true;
             if (rr == 0 && !hit_q.empty()) {
                 req = hit_q.pop();
+                cache[req.sideband.way_idx].tag_age_cnt--;
             }
             else if (rr == 1 && (!miss_q.empty() && cache[miss_q.front().sideband.way_idx].cl_rdy == 1)) {
                 req = miss_q.pop();
+                cache[req.sideband.way_idx].tag_age_cnt--;
+                cache[req.sideband.way_idx].cl_miss_ref_cnt--;
             }
             else if (rr == 2 && m_bank_wr_in.num_available()) {
                 m_bank_wr_in.nb_read(req);
+                cache[req.sideband.way_idx].cl_rdy = 1;
             }
             else{
                 IsFindOut = false;
@@ -2383,6 +2395,7 @@ void AS_PIPE::ProcessSem(Request req)
             cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
+            cache[way_idx].cl_dirty = true;
             // update sem addr
             req.sideband.addr = TCMAddress(req.sideband.addr.raw + 8);
         }
@@ -2402,7 +2415,16 @@ void AS_PIPE::ProcessSem(Request req)
             // resp
             if (sem_tmp.post_value == sem_tmp.expect_value && sem_tmp.wait == 1){
                 Request req_out = req;
-                req_out.sideband.trans_id = 0; //需要改，要缓存一下acc里的信息
+                for (uint32_t u = 0; u < RVC_NUM; u++){
+                    if (sem_sb_buf[u].valid && sem_sb_buf[u].rvs_id == sem_tmp.wait_core_id){
+                        req_out.sideband.trans_id = sem_sb_buf[u].trans_id;
+                        // reset
+                        sem_sb_buf[u].valid = false;
+                        sem_sb_buf[u].rvs_id = 0;
+                        sem_sb_buf[u].trans_id = 0;
+                        break;
+                    }
+                }
                 req_out.sideband.rvs_id = sem_tmp.wait_core_id;
                 req_out.sideband.op_type = OP_SEM_WAIT;
                 m_as_rvc_out.write(req_out);
@@ -2417,6 +2439,7 @@ void AS_PIPE::ProcessSem(Request req)
             cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
+            cache[way_idx].cl_dirty = true;
             // update sem addr
             req.sideband.addr = TCMAddress(req.sideband.addr.raw + 8);
         }
@@ -2442,22 +2465,165 @@ void AS_PIPE::ProcessSem(Request req)
             sem_tmp.post_value = 0;
             sem_tmp.update_raw_val();
         }
+        else{
+            for (uint32_t u = 0; u < RVC_NUM; u++){
+                if (!sem_sb_buf[u].valid){
+                    sem_sb_buf[u].valid = true;
+                    sem_sb_buf[u].rvs_id = req.sideband.rvs_id;
+                    sem_sb_buf[u].trans_id = req.sideband.trans_id;
+                    break;
+                }
+            }
+        }
         // update cache
         cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 31;
         cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
         cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
         cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
+        cache[way_idx].cl_dirty = true;
     }
 }
 
 void AS_PIPE::ProcessAtomic(Request req)
 {
+    uint64_t old_val = 0;
+    uint64_t new_val = 0;
+    uint64_t src_val = 0;
+    uint32_t data_valid_start_idx = 0;
+    uint32_t way_idx = req.sideband.way_idx;
+    for (uint32_t u = 0; u < 32; u++){
+        if (req.payload.mask[u] != 0){
+            data_valid_start_idx = u;
+            break;
+        }
+    }
+    // get src and old value
+    if (req.sideband.data_len == 32){
+        src_val = req.payload.data[data_valid_start_idx];
+        old_val = cache[way_idx].data[data_valid_start_idx];
+    }
+    else if (req.sideband.data_len == 64){
+        src_val = req.payload.data[data_valid_start_idx] << 32 + req.payload.data[data_valid_start_idx + 1];
+        old_val = cache[way_idx].data[data_valid_start_idx] << 32 + cache[way_idx].data[data_valid_start_idx + 1];
+    }
+    // atomic operate
+    switch (req.sideband.atomic_type){
+        case ATOM_SWAP:
+            new_val = src_val;
+            break;
+        case ATOM_ADD:
+            new_val = old_val + src_val;
+            break;
+        case ATOM_CLR:
+            new_val = old_val & src_val;
+            break;
+        case ATOM_EOR:
+            new_val = old_val ^ src_val;
+            break;
+        case ATOM_SET:
+            new_val = old_val | src_val;
+            break;
 
+        case ATOM_SMAX:
+            if (req.sideband.data_len == 32){
+                int32_t old_s_val = (int32_t)(old_val & 0xFFFFFFFF);
+                int32_t src_s_val = (int32_t)(src_val & 0xFFFFFFFF);
+                new_val = (old_s_val > src_s_val) ? old_val : src_val;
+            }
+            else if (req.sideband.data_len == 64){
+                int64_t old_s_val = (int64_t)old_val;
+                int64_t src_s_val = (int64_t)src_val;
+                new_val = (old_s_val > src_s_val) ? old_val : src_val;
+            }
+            break;
+        case ATOM_SMIN:
+            if (req.sideband.data_len == 32){
+                int32_t old_s_val = (int32_t)(old_val & 0xFFFFFFFF);
+                int32_t src_s_val = (int32_t)(src_val & 0xFFFFFFFF);
+                new_val = (old_s_val < src_s_val) ? old_val : src_val;
+            }
+            else if (req.sideband.data_len == 64){
+                int64_t old_s_val = (int64_t)old_val;
+                int64_t src_s_val = (int64_t)src_val;
+                new_val = (old_s_val < src_s_val) ? old_val : src_val;
+            }
+            break;
+        case ATOM_UMAX:
+            new_val = (old_val > src_val) ? old_val : src_val;
+            break;
+        case ATOM_UMIN:
+            new_val = (old_val < src_val) ? old_val : src_val;
+            break;
+        default:
+            break;
+    }
+    // write cache
+    if (req.sideband.data_len == 32){
+        cache[way_idx].data[data_valid_start_idx] = new_val & 0xFFFFFFFF;
+        cache[way_idx].cl_mask[data_valid_start_idx] = 0xFFFFFFFF;
+
+    }
+    else if (req.sideband.data_len == 64){
+        cache[way_idx].data[data_valid_start_idx + 1] = new_val & 0xFFFFFFFF;
+        cache[way_idx].cl_mask[data_valid_start_idx + 1] = 0xFFFFFFFF;
+        cache[way_idx].data[data_valid_start_idx] = (new_val >> 32) & 0xFFFFFFFF;
+        cache[way_idx].cl_mask[data_valid_start_idx] = 0xFFFFFFFF;
+    }
+    cache[way_idx].cl_dirty = true;
+    //resp
+    Request req_out = req;
+    if (req.sideband.data_len == 32){
+        req_out.payload.data[data_valid_start_idx] = old_val;
+    }
+    else if (req.sideband.data_len == 64){
+        req_out.payload.data[data_valid_start_idx + 1] = old_val & 0xFFFFFFFF;
+        req_out.payload.data[data_valid_start_idx] = (old_val >> 32) & 0xFFFFFFFF;
+    }
+    if (req.sideband.master_type == MASTER_RVC){
+        m_as_rvc_out.write(req_out);
+    }
+    else if (req.sideband.master_type == MASTER_NIU){
+        m_as_niu_wr_rd_out.write(req_out);
+    }
 }
 
-Request AS_PIPE::CacheWrRd(Request req)
+void AS_PIPE::CacheWrRd(Request req)
 {
-
+    uint32_t way_idx = req.sideband.way_idx;
+    Request req_out = req;
+    if (req.sideband.op_type == OP_WRITE){
+        for (uint32_t u = 0; u < 32; u++){
+            cache[way_idx].data[u] = (cache[way_idx].data[u] & ~req.payload.mask[u]) | (req.payload.data[u] & req.payload.mask[u]);
+            cache[way_idx].cl_mask[u] = cache[way_idx].cl_mask[u] | req.payload.mask[u];
+        }
+    }
+    else{
+        for (uint32_t u = 0; u < 32; u++){
+            req_out.payload.data[u] = cache[way_idx].data[u] & req.payload.mask[u];
+            cache[way_idx].cl_mask[u] = cache[way_idx].cl_mask[u] | req.payload.mask[u];
+        }
+    }
+    cache[way_idx].cl_dirty = true;
+    // resp
+    if (req.sideband.master_type == MASTER_DMA){
+        m_dma_rd_desc_out.write(req_out);
+    }
+    else if (req.sideband.master_type == MASTER_NIU){
+        if (req.sideband.op_type == OP_READ || req.sideband.instr_last == 1){
+            m_as_niu_wr_rd_out.write(req_out);
+        }
+    }
+    else if (req.sideband.master_type == MASTER_RVC){
+        if (req.sideband.op_type == OP_READ || req.sideband.instr_last == 1){
+            m_as_rvc_out.write(req_out);
+        }
+    }
+    else if (req.sideband.master_type == MASTER_CP){
+        if (req.sideband.op_type == OP_READ){
+            m_as_cp_out.write(req_out);
+        }
+    }
+    // else cacheline write
 }
 
 void AS_PIPE::ProcessCache(void)
@@ -2472,11 +2638,12 @@ void AS_PIPE::ProcessCache(void)
     }
     else if (req.sideband.op_type == OP_ATOMIC){
         ProcessAtomic(req);
-        Request req_out = {};
     }
-    else{
-        Request req_out = CacheWrRd(req);
+    else{ // read and write
+        CacheWrRd(req);
     }
 }
+
+//差cfi和barrier proc
 
 }

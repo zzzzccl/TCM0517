@@ -48,6 +48,7 @@ namespace pim_tcm
 const uint32_t NUM_DMA_TCM_WR_IF = 2;
 const uint32_t NUM_DMA_NOC_IF = 2;
 const uint32_t RVV_NUM = 4;
+const uint32_t RVC_NUM = 8;
 
 const uint32_t BANK_ROW_NUM = 1024;
 const uint32_t BANK_LANE_NUM = 8;
@@ -914,6 +915,12 @@ private:
         }
     };
 
+    struct SemSideband {
+        bool valid = false;
+        uint8_t trans_id = 0;
+        uint8_t rvs_id = 0;
+    }
+
     struct CacheLine{
         bool tag_vld = 0;
         uint32_t tag_tag = 0;
@@ -942,11 +949,15 @@ private:
     };
 
     CacheLine cache[8];
+
+    SemSideband sem_sb_buf[RVC_NUM];
     
     std::queue<Request> hit_q;
     std::queue<Request> miss_q;
 
     uint8_t plsu_n[3][4] = {};
+
+
  
     // interface among AS_PIPE, bank and MASKTER_FE
     sc_fifo_in<Request> m_dma_rd_desc_in;
@@ -998,7 +1009,7 @@ private:
     void ProcessCache(void);
     void ProcessSem(Request req);
     void ProcessAtomic(Request req);
-    Request CacheWrRd(Request req);
+    void CacheWrRd(Request req);
 
 public:
     AS_PIPE(sc_module_name module_name)
