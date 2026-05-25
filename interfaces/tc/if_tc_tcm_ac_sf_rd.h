@@ -32,7 +32,7 @@ struct MatrixSbField
     uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
 };
 
-union SrcInfoUnion
+union TCSrcInfoUnion
 {
     MatrixAField  matrix_a;
     MatrixSaField matrix_sa;
@@ -49,7 +49,7 @@ struct if_tc_tcm_ac_sf_rd
     uint8_t buf_inx     : 5; // Credit buffer start index.
     uint8_t matrix_src  : 2; // 0: A; 1: C; 2: SF_A; 3: SF_B.
 
-    SrcInfoUnion SrcInfoUnion;
+    TCSrcInfoUnion SrcInfoUnion;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {

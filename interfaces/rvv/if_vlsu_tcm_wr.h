@@ -4,7 +4,7 @@
 namespace IF_GEN
 {
 
-struct WriteField
+struct RVVWriteField
 {
     uint8_t  last      : 1; // 1: last burst of instruction.
     uint8_t  burst_len : 3; // Burst len, 0~7.
@@ -13,17 +13,17 @@ struct WriteField
     uint32_t data[16];       // Write data, 512 bits, must not cross 128-byte boundary.
 };
 
-struct VmemFenceField
+struct RVVVmemFenceField
 {
     uint8_t  last        : 1; // 1: last burst of instruction.
     uint8_t  sem_post_en : 1; // 1: vmem_fence + sem.post; 0: vmem_fence only.
     uint32_t addr        : 21; // Semaphore address.
 };
 
-union WrInfoUnion
+union RVVWrInfoUnion
 {
-    WriteField    write;
-    VmemFenceField vmem_fence;
+    RVVWriteField    write;
+    RVVVmemFenceField vmem_fence;
 };
 
 struct if_vlsu_tcm_wr
@@ -32,7 +32,7 @@ struct if_vlsu_tcm_wr
 
     uint8_t op : 2; // 0: read reserved; 1: write; 2: vmem_fence.
 
-    WrInfoUnion wr_union;
+    RVVWrInfoUnion wr_union;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {

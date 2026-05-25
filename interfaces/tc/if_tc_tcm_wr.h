@@ -4,24 +4,24 @@
 namespace IF_GEN
 {
 
-struct WriteField
+struct TCWriteField
 {
     uint32_t addr : 21;      // TCM byte address, must not cross 128-byte boundary.
     uint32_t data[32];       // 1024 bits data.
     uint8_t  instr_last : 1; // 1: last burst of instruction.
 };
 
-struct SemField
+struct TCSemField
 {
     uint32_t addr : 21;      // Semaphore address.
     uint8_t  num  : 2;       // Number of semaphores for continuous operation.
     uint8_t  instr_last : 1; // 1: last burst of instruction.
 };
 
-union WrInfoUnion
+union TCWrInfoUnion
 {
-    WriteField write;
-    SemField   sem;
+    TCWriteField write;
+    TCSemField   sem;
 };
 
 struct if_tc_tcm_wr
@@ -32,7 +32,7 @@ struct if_tc_tcm_wr
     uint8_t rvs_core_id : 3; // RVS core id.
     uint8_t instr_id    : 4; // Instruction id.
 
-    WrInfoUnion wr_sem_union;
+    TCWrInfoUnion wr_sem_union;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {

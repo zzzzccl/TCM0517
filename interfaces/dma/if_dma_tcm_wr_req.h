@@ -4,7 +4,7 @@
 namespace IF_GEN
 {
 
-struct WriteField
+struct DMAWriteField
 {
     uint32_t addr : 21; // TCM address, 1024 bits aligned.
     uint32_t data[32];  // Data to be written into TCM, 1024 bits.
@@ -13,16 +13,16 @@ struct WriteField
     uint8_t  instr_last : 1; // Indicate that this is the last transaction of a DMA instruction.
 };
 
-struct SemField
+struct DMASemField
 {
     uint32_t addr    : 21; // TCM address, 64 bits aligned.
     uint8_t  sem_num : 2;  // Number of semaphore to be updated.
 };
 
-union WriteSemUnion
+union DMAWriteSemUnion
 {
-    WriteField write;
-    SemField   sem;
+    DMAWriteField write;
+    DMASemField   sem;
 };
 
 struct if_dma_tcm_wr_req
@@ -56,7 +56,7 @@ struct if_dma_tcm_wr_req
      *      }
      * }
     */
-    WriteSemUnion write_sem_union;
+    DMAWriteSemUnion write_sem_union;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {
