@@ -398,7 +398,7 @@ void RVV_FE::ProcessVLSUWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_vlsu_tcm_
 
             if (req_in.wr_union.write.last == 1){
                 Request req_out = {};
-                m_wr_burst_buf[src].req.sideband.last = 1;
+                m_wr_burst_buf[src].req.sideband.instr_last = 1;
                 ExpandMask4To32(m_wr_burst_buf[src].mask, m_wr_burst_buf[src].req.payload.mask);
                 req_out = m_wr_burst_buf[src].req;
 
@@ -1290,15 +1290,7 @@ void NIU_BE::ProcessNIUBankWrRd(void)
         }
 
         m_bank_niu_wr_rd_in.nb_read(req_in);
-        if (req_in.sideband.op_type == OP_WRITE){
-            IF_GEN::if_niu_tcm_wresp req_out;
-            req_out.id = req_in.sideband.id;
-            req_out.user = req_in.sideband.user;
-            req_out.resp = 0;
-
-            m_bank_niu_wresp_fifo.write(req_out);
-        }
-        else{
+        if (req_in.sideband.op_type == OP_READ){
             IF_GEN::if_niu_tcm_rtn req_out;
             req_out.id = req_in.sideband.id;
             req_out.last = req_in.sideband.instr_last;
@@ -1309,6 +1301,14 @@ void NIU_BE::ProcessNIUBankWrRd(void)
             }
 
             m_bank_niu_rtn_fifo.write(req_out);
+        }
+        else{ // write and sem post
+            IF_GEN::if_niu_tcm_wresp req_out;
+            req_out.id = req_in.sideband.id;
+            req_out.user = req_in.sideband.user;
+            req_out.resp = 0;
+
+            m_bank_niu_wresp_fifo.write(req_out);
         }
     }
 }
@@ -1363,7 +1363,7 @@ void NIU_BE::ProcessNIUASWrRd(void)
 
                 m_as_niu_rtn_fifo.write(req_out); 
             }
-            else{ //WRITE SEM_POST
+            else{ //WRITE
                 IF_GEN::if_niu_tcm_wresp req_out;
                 req_out.id = req_in.sideband.id;
                 req_out.user = req_in.sideband.user;
@@ -1460,7 +1460,7 @@ void RVC_BE::ProcessRVCWrRd(void)
             IF_GEN::if_rvs_tcm_r req_out;
             req_out.id = req_in.sideband.id;
             req_out.resp = 0;
-            req_out.last = req_in.sideband.last;
+            req_out.last = req_in.sideband.instr_last;
             uint32_t bank_idx = req_in.sideband.addr.bank_index;
             for (uint32_t u = 0; u < 8; u++){
                 req_out.data[u] = req_in.payload.data[bank_idx * 8 + u]; 
@@ -1693,14 +1693,14 @@ void BANK::ProcessBuf(void)
             Request req_in = buf.ifbuf[TC_B_R].req;
             // beat buf_idx
             uint32_t buf_inx = req_in.sideband.buf_inx;
-            uint32_t bank_idx = req_in.sideband.addr.bank_index;
+            uint32_t start_lane_idx = req_in.sideband.addr.lane_index;
             uint32_t beat_num = 0;
-            if (lane_idx < bank_idx){
-                beat_num = lane_idx + 8 - bank_idx;
+            if (lane_idx < start_lane_idx){
+                beat_num = lane_idx + 8 - start_lane_idx;
                 req_in.sideband.addr.row_index++;
             }
             else{
-                beat_num = lane_idx - bank_idx;
+                beat_num = lane_idx - start_lane_idx;
             }
             req_in.sideband.buf_inx = buf_inx + beat_num;
             // beat lane_idx
@@ -1725,14 +1725,14 @@ void BANK::ProcessBuf(void)
                     req_in = buf.ifbuf[TC_B_R].req;
                     // beat buf_idx
                     buf_inx = req_in.sideband.buf_inx;
-                    bank_idx = req_in.sideband.addr.bank_index;
+                    start_lane_idx = req_in.sideband.addr.lane_index;
                     beat_num = 0;
-                    if (lane_idx < bank_idx){
-                        beat_num = lane_idx + 8 - bank_idx;
+                    if (lane_idx < start_lane_idx){
+                        beat_num = lane_idx + 8 - start_lane_idx;
                         req_in.sideband.addr.row_index++;
                     }
                     else{
-                        beat_num = lane_idx - bank_idx;
+                        beat_num = lane_idx - start_lane_idx;
                     }
                     req_in.sideband.buf_inx = buf_inx + beat_num;
                     // beat lane_idx
@@ -1766,14 +1766,14 @@ void BANK::ProcessBuf(void)
             Request req_in = buf.ifbuf[TC_MIX_R].req;
             // beat buf_idx
             uint32_t buf_inx = req_in.sideband.buf_inx;
-            uint32_t bank_idx = req_in.sideband.addr.bank_index;
+            uint32_t start_lane_idx = req_in.sideband.addr.lane_index;
             uint32_t beat_num = 0;
-            if (lane_idx < bank_idx){
-                beat_num = lane_idx + 8 - bank_idx;
+            if (lane_idx < start_lane_idx){
+                beat_num = lane_idx + 8 - start_lane_idx;
                 req_in.sideband.addr.row_index++;
             }
             else{
-                beat_num = lane_idx - bank_idx;
+                beat_num = lane_idx - start_lane_idx;
             }
             req_in.sideband.buf_inx = buf_inx + beat_num;
             // beat lane_idx
@@ -1804,13 +1804,13 @@ void BANK::ProcessBuf(void)
             Request req_in = buf.ifbuf[DMA_R].req;
             // beat blk_idx
             uint32_t blk_id = 0;
-            uint32_t bank_idx = req_in.sideband.addr.bank_index;
-            if (lane_idx < bank_idx){
-                blk_id = lane_idx + 8 - bank_idx;
+            uint32_t start_lane_idx = req_in.sideband.addr.lane_index;
+            if (lane_idx < start_lane_idx){
+                blk_id = lane_idx + 8 - start_lane_idx;
                 req_in.sideband.addr.row_index++;
             }
             else{
-                blk_id = lane_idx - bank_idx;
+                blk_id = lane_idx - start_lane_idx;
             }
             req_in.sideband.blk_id = blk_id;
             // beat lane_idx
@@ -1841,6 +1841,7 @@ void BANK::ProcessBuf(void)
             Request req_out = BankWrRd(buf.ifbuf[AS_WR].req);
             if (req_out.sideband.op_type == OP_READ){
                 req_out.sideband.master_type = MASTER_BANK;
+                req_out.sideband.op_type = OP_WRITE;
                 m_as_rd_out.write(req_out);
             }
             buf.ifbuf[AS_WR].valid = false;
@@ -2244,7 +2245,7 @@ void AS_PIPE::HitTest(void)
                         req_in.sideband.sem_num = sem_num1;
                         fifo_tmp.push(req_in);
 
-                        req_in.sideband.sem_num = sem_num1;
+                        req_in.sideband.sem_num = sem_num2;
                         if (lane_idx == 7){
                             req_in.sideband.addr.row_index++;
                             req_in.sideband.addr.lane_index = 0;
