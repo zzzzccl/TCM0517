@@ -49,8 +49,8 @@ void DMA_FE::ProcessDMAWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_dma_tcm_wr
             if (isSem[(src + 1) % 2] == true){
                 isSem[(src + 1) % 2] = false;
                 sb.op_type = OP_SEM_POST;
-                sb.addr = TCMAddress(req_in.write_sem_union.sem.addr);
-                sb.sem_num = req_in.write_sem_union.sem.sem_num;
+                sb.addr = TCMAddress(req_in.wr_info_union_data.sem_post_data.addr);
+                sb.sem_num = req_in.wr_info_union_data.sem_post_data.sem_num;
                 sb.data_len = 64;
                 req_out.sideband = sb;
                 sem_out_if.write(req_out);
@@ -61,17 +61,17 @@ void DMA_FE::ProcessDMAWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_dma_tcm_wr
         }
         else{
             sb.op_type = OP_WRITE;
-            sb.addr = TCMAddress(req_in.write_sem_union.write.addr);
-            sb.instr_id = req_in.write_sem_union.write.instr_id;
+            sb.addr = TCMAddress(req_in.wr_info_union_data.write_data.addr);
+            sb.instr_id = req_in.wr_info_union_data.write_data.instr_id;
             sb.burst_len = 0;
-            sb.instr_last = req_in.write_sem_union.write.instr_last;
+            sb.instr_last = req_in.wr_info_union_data.write_data.instr_last;
             sb.resp_type = req_in.op & 0x1;
 
             for(uint32_t u = 0; u < 32; u++)
             {
-                pl.data[u] = req_in.write_sem_union.write.data[u];
+                pl.data[u] = req_in.wr_info_union_data.write_data.data[u];
             }
-            ExpandMask4To32(req_in.write_sem_union.write.mask, pl.mask);
+            ExpandMask4To32(req_in.wr_info_union_data.write_data.mask, pl.mask);
 
             uint32_t lane_idx = sb.addr.lane_index;
             req_out.mask[lane_idx] = 1;
@@ -187,9 +187,9 @@ void TC_FE::ProcessTCWr(void)
         sb.instr_id = req_in.instr_id;
         if (req_in.op == 2){
             sb.op_type = OP_SEM_POST;
-            sb.addr = TCMAddress(req_in.wr_sem_union.sem.addr);
-            sb.sem_num = req_in.wr_sem_union.sem.num;
-            sb.instr_last = req_in.wr_sem_union.sem.instr_last;
+            sb.addr = TCMAddress(req_in.wr_info_union_data.sem_post_data.addr);
+            sb.sem_num = req_in.wr_info_union_data.sem_post_data.num;
+            sb.instr_last = req_in.wr_info_union_data.sem_post_data.instr_last;
             sb.data_len = 64;
             req_out.sideband = sb;
 
@@ -198,13 +198,13 @@ void TC_FE::ProcessTCWr(void)
         }
         else if (req_in.op == 1){
             sb.op_type = OP_WRITE;
-            sb.addr = TCMAddress(req_in.write_sem_union.write.addr);
+            sb.addr = TCMAddress(req_in.wr_info_union_data.write_data.addr);
             sb.burst_len = 0;
-            sb.instr_last = req_in.wr_sem_union.write.instr_last;
+            sb.instr_last = req_in.wr_info_union_data.write_data.instr_last;
 
             for(uint32_t u = 0; u < 32; u++)
             {
-                pl.data[u] = req_in.wr_sem_union.write.data[u];
+                pl.data[u] = req_in.wr_info_union_data.write_data.data[u];
             }
 
             for(uint32_t u = 0; u < 32; u++)
@@ -284,24 +284,24 @@ void TC_FE::ProcessTCRd1(void)
         sb.buf_inx = req_in.buf_inx;
         sb.matrix_src = req_in.matrix_src;
         if (sb.matrix_src == 0){
-            sb.addr = TCMAddress(req_in.SrcInfoUnion.matrix_a.addr);
-            sb.grp_mask = req_in.SrcInfoUnion.matrix_a.grp_mask;
-            sb.burst_len = req_in.SrcInfoUnion.matrix_a.burst_len;
+            sb.addr = TCMAddress(req_in.src_info_union_data.matrix_a_data.addr);
+            sb.grp_mask = req_in.src_info_union_data.matrix_a_data.grp_mask;
+            sb.burst_len = req_in.src_info_union_data.matrix_a_data.burst_len;
         }
         else if (sb.matrix_src == 1){
-            sb.addr = TCMAddress(req_in.SrcInfoUnion.matrix_c.addr);
-            sb.grp_mask = req_in.SrcInfoUnion.matrix_c.grp_mask;
-            sb.burst_len = req_in.SrcInfoUnion.matrix_c.burst_len;
+            sb.addr = TCMAddress(req_in.src_info_union_data.matrix_c_data.addr);
+            sb.grp_mask = req_in.src_info_union_data.matrix_c_data.grp_mask;
+            sb.burst_len = req_in.src_info_union_data.matrix_c_data.burst_len;
         }
         else if (sb.matrix_src == 2){
-            sb.addr = TCMAddress(req_in.SrcInfoUnion.matrix_sa.addr);
-            sb.grp_mask = req_in.SrcInfoUnion.matrix_sa.grp_mask;
-            sb.burst_len = req_in.SrcInfoUnion.matrix_sa.burst_len;
+            sb.addr = TCMAddress(req_in.src_info_union_data.matrix_sa_data.addr);
+            sb.grp_mask = req_in.src_info_union_data.matrix_sa_data.grp_mask;
+            sb.burst_len = req_in.src_info_union_data.matrix_sa_data.burst_len;
         }
         else if (sb.matrix_src == 3){
-            sb.addr = TCMAddress(req_in.SrcInfoUnion.matrix_sb.addr);
-            sb.grp_mask = req_in.SrcInfoUnion.matrix_sb.grp_mask;
-            sb.burst_len = req_in.SrcInfoUnion.matrix_sb.burst_len;
+            sb.addr = TCMAddress(req_in.src_info_union_data.matrix_sb_data.addr);
+            sb.grp_mask = req_in.src_info_union_data.matrix_sb_data.grp_mask;
+            sb.burst_len = req_in.src_info_union_data.matrix_sb_data.burst_len;
         }
         uint8_t grp_mask_tmp = sb.grp_mask;
         for(uint32_t u = 0; u < 4; u++)
@@ -359,9 +359,9 @@ void RVV_FE::ProcessVLSUWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_vlsu_tcm_
             sb.op = req_in.op;
             sb.master_type = master_type;
             sb.debug_tag = req_in.debug_tag;
-            if (req_in.wr_union.vmem_fence.sem_post_en == 1){
+            if (req_in.wr_info_union_data.vmem_fence_data.sem_post_en == 1){
                 sb.op_type = OP_SEM_POST;
-                sb.addr = TCMAddress(req_in.wr_union.vmem_fence.addr);
+                sb.addr = TCMAddress(req_in.wr_info_union_data.vmem_fence_data.addr);
                 sb.sem_num = 0;
                 sb.data_len = 64;
                 req_out.sideband = sb;
@@ -374,29 +374,29 @@ void RVV_FE::ProcessVLSUWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_vlsu_tcm_
         else if (req_in.op == 1){
             if (m_wr_burst_buf[src].valid == false){
                 m_wr_burst_buf[src].valid = true;
-                m_wr_burst_buf[src].expect_len = req_in.wr_union.write.burst_len + 1;
+                m_wr_burst_buf[src].expect_len = req_in.wr_info_union_data.write_data.burst_len + 1;
                 m_wr_burst_buf[src].recv_len = 0;
 
                 m_wr_burst_buf[src].req.sideband.op = req_in.op;
                 m_wr_burst_buf[src].req.sideband.master_type = master_type;
                 m_wr_burst_buf[src].req.sideband.op_type = OP_WRITE;
                 m_wr_burst_buf[src].req.sideband.debug_tag = req_in.debug_tag;
-                m_wr_burst_buf[src].req.sideband.addr = req_in.wr_union.write.addr;
+                m_wr_burst_buf[src].req.sideband.addr = req_in.wr_info_union_data.write_data.addr;
                 m_wr_burst_buf[src].req.sideband.burst_len = 0;
             }
-            TCMAddress tmp_addr = req_in.wr_union.write.addr;
+            TCMAddress tmp_addr = req_in.wr_info_union_data.write_data.addr;
             uint32_t bank_idx = tmp_addr.bank_index;
             uint32_t bank_start_idx = bank_idx / 2;
             for (uint32_t u = 0; u < 2; u++){
-                m_rd_burst_buf[src].mask[bank_start_idx * 2 + u] += req_in.wr_union.write.strb[u];
+                m_wr_burst_buf[src].mask[bank_start_idx * 2 + u] += req_in.wr_info_union_data.write_data.strb[u];
                 for (uint32_t i = 0; i < 8; i++){
-                    m_wr_burst_buf[src].req.payload.data[(bank_start_idx * 2 + u) * 8 + i] += req_in.wr_union.write.data[u * 8 + i];
+                    m_wr_burst_buf[src].req.payload.data[(bank_start_idx * 2 + u) * 8 + i] += req_in.wr_info_union_data.write_data.data[u * 8 + i];
                 }
             }
 
             m_wr_burst_buf[src].recv_len++;
 
-            if (req_in.wr_union.write.last == 1){
+            if (req_in.wr_info_union_data.write_data.last == 1){
                 Request req_out = {};
                 m_wr_burst_buf[src].req.sideband.instr_last = 1;
                 ExpandMask4To32(m_wr_burst_buf[src].mask, m_wr_burst_buf[src].req.payload.mask);
@@ -421,19 +421,23 @@ void RVV_FE::ProcessVLSUWr(uint32_t src, rgx_fifo_interface<IF_GEN::if_vlsu_tcm_
     }
 }
 
-void RVV_FE::ProcessVLSU0Wr(void){
+void RVV_FE::ProcessVLSU0Wr(void)
+{
     ProcessVLSUWr(0, m_vlsu0_tcm_wr_if, m_vlsu0_wr_out, m_vlsu0_sem_out);
 }
 
-void RVV_FE::ProcessVLSU1Wr(void){
+void RVV_FE::ProcessVLSU1Wr(void)
+{
     ProcessVLSUWr(1, m_vlsu1_tcm_wr_if, m_vlsu1_wr_out, m_vlsu1_sem_out);
 }
 
-void RVV_FE::ProcessVLSU2Wr(void){
+void RVV_FE::ProcessVLSU2Wr(void)
+{
     ProcessVLSUWr(2, m_vlsu2_tcm_wr_if, m_vlsu2_wr_out, m_vlsu2_sem_out);
 }
 
-void RVV_FE::ProcessVLSU3Wr(void){
+void RVV_FE::ProcessVLSU3Wr(void)
+{
     ProcessVLSUWr(3, m_vlsu3_tcm_wr_if, m_vlsu3_wr_out, m_vlsu3_sem_out);
 }
 
@@ -588,10 +592,10 @@ void NIU_FE::ProcessNIUWr(void)
                 Request req_out = {};
                 Payload pl = {};
                 sb.atomic_type = req_hdr.atop;
-                if (req_hdr.len == 2){
+                if (req_hdr.size == 2){
                     sb.data_len = 32;
                 }
-                else if(req_hdr.len == 3){
+                else if(req_hdr.size == 3){
                     sb.data_len = 64;
                 }
                 uint32_t bank_idx = sb.addr.bank_index;
@@ -972,9 +976,11 @@ void CP_FE::ProcessCPWrRd(void)
             for (uint32_t u = 0; u < 8; u++){
                 pl.data[bank_idx * 8 + u] = req_data.data[u];
             }
-            uint32_t mask[4] = {};
-            mask[bank_idx] = req_data.mask;
-            ExpandMask4To32(mask, pl.mask);
+            for (uint32_t u = 0; u < 32; u++){
+                if (((req_data.mask >> (31 - u)) & 0x1) == 1){
+                    pl.mask[u] = 0xFFFFFFFF;
+                }
+            }
 
             req_out.payload = pl;
             req_out.sideband = sb;
@@ -995,7 +1001,7 @@ void DMA_BE::ProcessDMAWr0(void)
         }
 
         m_dma_wr0_in.nb_read(req_in);
-        IF_GEN::if_tcm_dma_bresp req_out;
+        IF_GEN::if_tcm_dma_bresp req_out = {};
         req_out.instr_id = req_in.sideband.instr_id;
         req_out.resp_type = req_in.sideband.resp_type;
         req_out.debug_tag = req_in.sideband.debug_tag;
@@ -1016,7 +1022,7 @@ void DMA_BE::ProcessDMAWr1(void)
         }
 
         m_dma_wr1_in.nb_read(req_in);
-        IF_GEN::if_tcm_dma_bresp req_out;
+        IF_GEN::if_tcm_dma_bresp req_out = {};
         req_out.instr_id = req_in.sideband.instr_id;
         req_out.resp_type = req_in.sideband.resp_type;
         req_out.debug_tag = req_in.sideband.debug_tag;
@@ -1037,7 +1043,7 @@ void DMA_BE::ProcessDMARdData(void)
         }
 
         m_dma_rd_data_in.nb_read(req_in);
-        IF_GEN::if_tcm_dma_rd_data_rtn req_out;
+        IF_GEN::if_tcm_dma_rd_data_rtn req_out = {};
         for (uint32_t u = 0; u < 32; u++){
             req_out.data[u] = req_in.payload.data[u];
         }
@@ -1061,7 +1067,7 @@ void DMA_BE::ProcessDMARdDesc(void)
         }
 
         m_dma_rd_desc_in.nb_read(req_in);
-        IF_GEN::if_tcm_dma_rd_desc_rtn req_out;
+        IF_GEN::if_tcm_dma_rd_desc_rtn req_out = {};
         uint32_t bank_idx = req_in.sideband.addr.bank_index;
         for (uint32_t u = 0; u < 8; u++){
             req_out.data[u] = req_in.payload.data[bank_idx * 8 + u];
@@ -1086,7 +1092,7 @@ void TC_BE::ProcessTCWr(void)
         }
 
         m_tc_wr_in.nb_read(req_in);
-        IF_GEN::if_tc_tcm_bresp req_out;
+        IF_GEN::if_tc_tcm_bresp req_out = {};
         req_out.op = req_in.sideband.op;
         req_out.rvs_core_id = req_in.sideband.rvs_id;
         req_out.instr_id = req_in.sideband.instr_id;
@@ -1109,7 +1115,7 @@ void TC_BE::ProcessTCBRd0(void)
         }
 
         m_tc_b_rd0_in.nb_read(req_in);
-        IF_GEN::if_tc_tcm_b_rtn req_out;
+        IF_GEN::if_tc_tcm_b_rtn req_out = {};
         req_out.rvs_core_id = req_in.sideband.rvs_id;
         req_out.instr_id = req_in.sideband.instr_id;
         req_out.buf_inx = req_in.sideband.buf_inx;
@@ -1134,7 +1140,7 @@ void TC_BE::ProcessTCBRd1(void)
         }
 
         m_tc_b_rd1_in.nb_read(req_in);
-        IF_GEN::if_tc_tcm_b_rtn req_out;
+        IF_GEN::if_tc_tcm_b_rtn req_out = {};
         req_out.rvs_core_id = req_in.sideband.rvs_id;
         req_out.instr_id = req_in.sideband.instr_id;
         req_out.buf_inx = req_in.sideband.buf_inx;
@@ -1159,7 +1165,7 @@ void TC_BE::ProcessTCMixRd(void)
         }
 
         m_tc_mix_rd_in.nb_read(req_in);
-        IF_GEN::if_tc_tcm_ac_sf_rtn req_out;
+        IF_GEN::if_tc_tcm_ac_sf_rtn req_out = {};
         req_out.rvs_core_id = req_in.sideband.rvs_id;
         req_out.instr_id = req_in.sideband.instr_id;
         req_out.buf_inx = req_in.sideband.buf_inx;
@@ -1186,7 +1192,7 @@ void RVV_BE::ProcessVLSUWr(void)
         }
 
         m_vlsu_wr_in.nb_read(req_in);
-        IF_GEN::if_vlsu_tcm_bresp req_out;
+        IF_GEN::if_vlsu_tcm_bresp req_out = {};
         req_out.op = req_in.sideband.op;
         req_out.resp = 0;
         req_out.debug_tag = req_in.sideband.debug_tag;
@@ -1291,7 +1297,7 @@ void NIU_BE::ProcessNIUBankWrRd(void)
 
         m_bank_niu_wr_rd_in.nb_read(req_in);
         if (req_in.sideband.op_type == OP_READ){
-            IF_GEN::if_niu_tcm_rtn req_out;
+            IF_GEN::if_niu_tcm_rtn req_out = {};
             req_out.id = req_in.sideband.id;
             req_out.last = req_in.sideband.instr_last;
             req_out.user = req_in.sideband.user;
@@ -1303,7 +1309,7 @@ void NIU_BE::ProcessNIUBankWrRd(void)
             m_bank_niu_rtn_fifo.write(req_out);
         }
         else{ // write and sem post
-            IF_GEN::if_niu_tcm_wresp req_out;
+            IF_GEN::if_niu_tcm_wresp req_out = {};
             req_out.id = req_in.sideband.id;
             req_out.user = req_in.sideband.user;
             req_out.resp = 0;
@@ -1326,15 +1332,15 @@ void NIU_BE::ProcessNIUASWrRd(void)
 
         m_as_niu_wr_rd_in.nb_read(req_in);
         if (req_in.sideband.master_type == MASTER_RVC){
-            IF_GEN::if_tcm_niu_remt_sem req_out;
+            IF_GEN::if_tcm_niu_remt_sem req_out = {};
             req_out.sem_addr = req_in.sideband.addr.raw & 0xFFFFFFFFFFFF;
             req_out.sem_num = req_in.sideband.sem_num;
             m_tcm_niu_remt_sem_if.write(req_out);
         }
         else{
             if (req_in.sideband.op_type == OP_ATOMIC){
-                IF_GEN::if_niu_tcm_wresp req_wresp_out;
-                IF_GEN::if_niu_tcm_rtn req_rtn_out;
+                IF_GEN::if_niu_tcm_wresp req_wresp_out = {};
+                IF_GEN::if_niu_tcm_rtn req_rtn_out = {};
                 req_wresp_out.id = req_in.sideband.id;
                 req_wresp_out.user = req_in.sideband.user;
                 req_wresp_out.resp = 0;
@@ -1352,7 +1358,7 @@ void NIU_BE::ProcessNIUASWrRd(void)
                 m_as_niu_rtn_fifo.write(req_rtn_out);
             }
             else if (req_in.sideband.op_type == OP_READ){
-                IF_GEN::if_niu_tcm_rtn req_out;
+                IF_GEN::if_niu_tcm_rtn req_out = {};
                 req_out.id = req_in.sideband.id;
                 req_out.last = req_in.sideband.instr_last;
                 req_out.user = req_in.sideband.user;
@@ -1364,7 +1370,7 @@ void NIU_BE::ProcessNIUASWrRd(void)
                 m_as_niu_rtn_fifo.write(req_out); 
             }
             else{ //WRITE
-                IF_GEN::if_niu_tcm_wresp req_out;
+                IF_GEN::if_niu_tcm_wresp req_out = {};
                 req_out.id = req_in.sideband.id;
                 req_out.user = req_in.sideband.user;
                 req_out.resp = 0;
@@ -1450,14 +1456,14 @@ void RVC_BE::ProcessRVCWrRd(void)
 
         m_as_rvc_in.nb_read(req_in);
         if (req_in.sideband.op_type == OP_WRITE){
-            IF_GEN::if_rvs_tcm_b req_out;
+            IF_GEN::if_rvs_tcm_b req_out = {};
             req_out.id = req_in.sideband.id;
             req_out.resp = 0;
 
             m_rvs_tcm_b_if.write(req_out);
         }
         else if (req_in.sideband.op_type == OP_READ){
-            IF_GEN::if_rvs_tcm_r req_out;
+            IF_GEN::if_rvs_tcm_r req_out = {};
             req_out.id = req_in.sideband.id;
             req_out.resp = 0;
             req_out.last = req_in.sideband.instr_last;
@@ -1469,7 +1475,7 @@ void RVC_BE::ProcessRVCWrRd(void)
             m_rvs_tcm_r_if.write(req_out);
         }
         else if (req_in.sideband.op_type == OP_ATOMIC){
-            IF_GEN::if_rvs_tcm_b req_b_out;
+            IF_GEN::if_rvs_tcm_b req_b_out = {};
             req_b_out.id = req_in.sideband.id;
             req_b_out.resp = 0;
 
@@ -1487,7 +1493,7 @@ void RVC_BE::ProcessRVCWrRd(void)
             m_rvs_tcm_r_if.write(req_r_out);
         }
         else if (req_in.sideband.op_type == OP_SEM_WAIT || req_in.sideband.op_type == OP_BARRIER_PROC){
-            IF_GEN::if_acc_resp req_out;
+            IF_GEN::if_acc_resp req_out = {};
             req_out.wakeup_mode = 1;
             req_out.trans_id = req_in.sideband.trans_id;
             req_out.rvs_id = req_in.sideband.rvs_id;
@@ -1509,7 +1515,7 @@ void RVC_BE::ProcessRVCCfi(void)
         }
 
         m_as_cfi_in.nb_read(req_in);
-        IF_GEN::if_rvs_tcm_cfi_ack req_out;
+        IF_GEN::if_rvs_tcm_cfi_ack req_out = {};
         req_out.valid = 1;
 
         m_rvs_tcm_cfi_ack_if.write(req_out);
@@ -1528,7 +1534,7 @@ void CP_BE::ProcessCPRd(void)
         }
 
         m_as_cp_in.nb_read(req_in);
-        IF_GEN::if_bif_rtn req_out;
+        IF_GEN::if_bif_rtn req_out = {};
         req_out.tag_sb = req_in.sideband.tag_sb;
         uint32_t bank_idx = req_in.sideband.addr.bank_index;
         for (uint32_t u = 0; u < 8; u++){
@@ -1662,7 +1668,7 @@ void BANK::UpdateBankBuf(void)
 void BANK::ProcessBuf(void)
 {
     if (buf.ifbuf[DMA_W0].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W0].req);
+        int lane_idx = LaneCheck(buf.ifbuf[DMA_W0].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[DMA_W0].req);
             if (buf.ifbuf[DMA_W0].req.sideband.instr_last == 1){
@@ -1675,7 +1681,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[DMA_W1].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_W1].req);
+        int lane_idx = LaneCheck(buf.ifbuf[DMA_W1].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[DMA_W1].req);
             if (buf.ifbuf[DMA_W1].req.sideband.instr_last == 1){
@@ -1688,7 +1694,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[TC_B_R].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_B_R].req);
+        int lane_idx = LaneCheck(buf.ifbuf[TC_B_R].req);
         if (lane_idx != -1){
             Request req_in = buf.ifbuf[TC_B_R].req;
             // beat buf_idx
@@ -1761,7 +1767,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[TC_MIX_R].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_MIX_R].req);
+        int lane_idx = LaneCheck(buf.ifbuf[TC_MIX_R].req);
         if (lane_idx != -1){
             Request req_in = buf.ifbuf[TC_MIX_R].req;
             // beat buf_idx
@@ -1799,7 +1805,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[DMA_R].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[DMA_R].req);
+        int lane_idx = LaneCheck(buf.ifbuf[DMA_R].req);
         if (lane_idx != -1){
             Request req_in = buf.ifbuf[DMA_R].req;
             // beat blk_idx
@@ -1836,7 +1842,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[AS_WR].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[AS_WR].req);
+        int lane_idx = LaneCheck(buf.ifbuf[AS_WR].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[AS_WR].req);
             if (req_out.sideband.op_type == OP_READ){
@@ -1850,7 +1856,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[TC_W].valid){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[TC_W].req);
+        int lane_idx = LaneCheck(buf.ifbuf[TC_W].req);
         if (lane_idx != -1){
             Request req_out = BankWrRd(buf.ifbuf[TC_W].req);
             if (buf.ifbuf[TC_W].req.sideband.instr_last == 1){
@@ -1884,7 +1890,7 @@ void BANK::ProcessBuf(void)
             }
             rr_rvv_r = (rr_rvv_r + 1) % 4;
             if (buf.ifbuf[iftype_tmp].valid){
-                uint8_t lane_idx = LaneCheck(buf.ifbuf[iftype_tmp].req);
+                int lane_idx = LaneCheck(buf.ifbuf[iftype_tmp].req);
                 if (lane_idx != -1){
                     rvv_niu_arb_buf[0].valid = true;
                     rvv_niu_arb_buf[0].iftype = iftype_tmp;
@@ -1903,20 +1909,20 @@ void BANK::ProcessBuf(void)
                     iftype_tmp = RVV0_W;
                     break;
                 case 1:
-                    iftype_tmp = RVV0_W;
+                    iftype_tmp = RVV1_W;
                     break;
                 case 2:
-                    iftype_tmp = RVV0_W;
+                    iftype_tmp = RVV2_W;
                     break;
                 case 3:
-                    iftype_tmp = RVV0_W;
+                    iftype_tmp = RVV3_W;
                     break;
                 default:
                     break;
             }
             rr_rvv_w = (rr_rvv_w + 1) % 4;
             if (buf.ifbuf[iftype_tmp].valid){
-                uint8_t lane_idx = LaneCheck(buf.ifbuf[iftype_tmp].req);
+                int lane_idx = LaneCheck(buf.ifbuf[iftype_tmp].req);
                 if (lane_idx != -1){
                     rvv_niu_arb_buf[1].valid = true;
                     rvv_niu_arb_buf[1].iftype = iftype_tmp;
@@ -1927,7 +1933,7 @@ void BANK::ProcessBuf(void)
         }
     }
     if (buf.ifbuf[NIU_WR].valid == true){
-        uint8_t lane_idx = LaneCheck(buf.ifbuf[NIU_WR].req);
+        int lane_idx = LaneCheck(buf.ifbuf[NIU_WR].req);
         if (lane_idx != -1){
             rvv_niu_arb_buf[2].valid = true;
             rvv_niu_arb_buf[2].iftype = NIU_WR;
@@ -1986,7 +1992,7 @@ void BANK::ProcessBuf(void)
     }
 }
 
-uint8_t BANK::LaneCheck(Request req)
+int BANK::LaneCheck(Request req)
 {
     for (uint32_t u = 0; u < 8; u++){
         if (req.mask[u] == 1 && lanemask[u] == 1){
@@ -2197,7 +2203,7 @@ void AS_PIPE::ProcessCfi(void)
                 req_out.sideband.op_type = OP_WRITE;
                 uint32_t lane_idx = req_out.sideband.addr.lane_index;
                 req_out.mask[lane_idx] = 1;
-                m_as_cfi_out.write(req_out);
+                m_as_wr_rd_out.write(req_out);
             }
             cache[u].reset();
         }
@@ -2218,16 +2224,16 @@ void AS_PIPE::HitTest(void)
         if (m_cfi_out.num_available()){
             m_cfi_out.nb_read(req_in);
             while (!hit_q.empty() || !miss_q.empty()){
-                wait();
+                wait(m_hit_q_pop_event | m_miss_q_pop_event);
             }
             ProcessCfi();
-            m_as_rvc_out.write(req_in);
+            m_as_cfi_out.write(req_in);
         }
         else{
             m_arb3_out.nb_read(req_in);
             if (req_in.sideband.op_type == OP_CFI){
                 while (!hit_q.empty() || !miss_q.empty()){
-                    wait();
+                    wait(m_hit_q_pop_event | m_miss_q_pop_event);
                 }
                 ProcessCfi();
             }
@@ -2277,11 +2283,15 @@ void AS_PIPE::HitTest(void)
                             if (cache[u].cl_rdy == 1){ // hit
                                 hit_q.push(req_tmp);
                                 cache[u].tag_age_cnt++;
+                                // event hit q has data
+                                m_hit_q_push_event.notify(SC_ZERO_TIME);
                             }
                             else{ // hit on miss
                                 miss_q.push(req_tmp);
                                 cache[u].tag_age_cnt++;
                                 cache[u].cl_miss_ref_cnt++;
+                                // event miss q has data
+                                m_miss_q_push_event.notify(SC_ZERO_TIME);
                             }
                             isFindCacheline = true;
                             break;
@@ -2293,6 +2303,10 @@ void AS_PIPE::HitTest(void)
                         if (way_idx == -1){
                             // find unlock cacheline
                             way_idx = PLSU(UNLOCK);
+                            while (way_idx == -1){
+                                wait(m_cache_unlock_event);
+                                way_idx = PLSU(UNLOCK);
+                            }
                             // cacheline write back to bank
                             if (cache[way_idx].cl_dirty == 1){
                                 Request req_out = {};
@@ -2320,6 +2334,7 @@ void AS_PIPE::HitTest(void)
                         req_out.sideband.addr.byte_offset = 0;
                         req_out.sideband.addr.update_raw_addr();
 
+                        req_out.sideband.way_idx = way_idx;
                         req_out.sideband.master_type = MASTER_AS;
                         req_out.sideband.op_type = OP_READ;
                         uint32_t lane_idx = req_out.sideband.addr.lane_index;
@@ -2332,6 +2347,8 @@ void AS_PIPE::HitTest(void)
                         cache[way_idx].tag_tag = tag;
                         cache[way_idx].tag_age_cnt = 1;
                         cache[way_idx].cl_miss_ref_cnt = 1;
+                        // event miss q has data
+                        m_miss_q_push_event.notify(SC_ZERO_TIME);
                     }
                 }
             }
@@ -2347,26 +2364,24 @@ void AS_PIPE::ProcessCacheArb(void)
     {
         // 等待至少有一个请求
         while (hit_q.empty() && (miss_q.empty() || (!miss_q.empty() && cache[miss_q.front().sideband.way_idx].cl_rdy == 0)) && m_bank_wr_in.num_available() == 0)
-            wait();
+            wait(m_hit_q_push_event | m_miss_q_push_event | m_bank_wr_in.data_written_event());
 
         Request req;
         bool IsFindOut = false;
+        CacheMasterType cache_master_type = HIT_Q;
         while (!IsFindOut){
             IsFindOut = true;
             if (rr == 0 && !hit_q.empty()) {
                 req = hit_q.front();
-                hit_q.pop();
-                cache[req.sideband.way_idx].tag_age_cnt--;
+                cache_master_type = HIT_Q;
             }
             else if (rr == 1 && (!miss_q.empty() && cache[miss_q.front().sideband.way_idx].cl_rdy == 1)) {
                 req = miss_q.front();
-                miss_q.pop();
-                cache[req.sideband.way_idx].tag_age_cnt--;
-                cache[req.sideband.way_idx].cl_miss_ref_cnt--;
+                cache_master_type = MISS_Q;
             }
             else if (rr == 2 && m_bank_wr_in.num_available()) {
                 m_bank_wr_in.nb_read(req);
-                cache[req.sideband.way_idx].cl_rdy = 1;
+                cache_master_type = BANK;
             }
             else{
                 IsFindOut = false;
@@ -2374,7 +2389,7 @@ void AS_PIPE::ProcessCacheArb(void)
             rr = (rr + 1) % 3;
         }
         // 下发到最终输出
-        m_q_arb_out.write(req);
+        ProcessCache(req, cache_master_type);
     }
 }
 
@@ -2398,12 +2413,13 @@ void AS_PIPE::ProcessBarrier(void)
                 barrier_sb_buf[u].init_val = 0;
             }
             for (uint32_t u = 0; u < 8; u++){
-                barrier_sb_buf[0].init_val += req_in.sideband.rvs_active_mask[u];
+                uint8_t mask_value = (req_in.sideband.rvs_active_mask >> (7 - u)) & 0x1;
+                barrier_sb_buf[0].init_val += mask_value;
                 if (u < 4){
-                    barrier_sb_buf[1].init_val += req_in.sideband.rvs_active_mask[u];
+                    barrier_sb_buf[1].init_val += mask_value;
                 }
                 else {
-                    barrier_sb_buf[2].init_val += req_in.sideband.rvs_active_mask[u];
+                    barrier_sb_buf[2].init_val += mask_value;
                 }
             }
             for (uint32_t u = 0; u < 3; u++){
@@ -2422,7 +2438,7 @@ void AS_PIPE::ProcessBarrier(void)
                         for (uint32_t u = 0; u < 8; u++){
                             req_out.sideband.trans_id = barrier_sb_buf[0].trans_id[u];
                             req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_in);
+                            m_as_rvc_out.write(req_out);
                         }
                         barrier_sb_buf[0].reset();
                     }
@@ -2434,7 +2450,7 @@ void AS_PIPE::ProcessBarrier(void)
                         for (uint32_t u = 0; u < 4; u++){
                             req_out.sideband.trans_id = barrier_sb_buf[1].trans_id[u];
                             req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_in);
+                            m_as_rvc_out.write(req_out);
                         }
                         barrier_sb_buf[1].reset();
                     }
@@ -2446,7 +2462,7 @@ void AS_PIPE::ProcessBarrier(void)
                         for (uint32_t u = 4; u < 8; u++){
                             req_out.sideband.trans_id = barrier_sb_buf[2].trans_id[u];
                             req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_in);
+                            m_as_rvc_out.write(req_out);
                         }
                         barrier_sb_buf[2].reset();
                     }
@@ -2461,7 +2477,7 @@ void AS_PIPE::ProcessBarrier(void)
 void AS_PIPE::ProcessSem(Request req)
 {
     uint32_t sem_num = req.sideband.sem_num;
-    if (req.sideband.op_type == SEM_INIT){
+    if (req.sideband.op_type == OP_SEM_INIT){
         for (uint32_t u = 0; u < sem_num; u++){
             uint32_t sem_value[2] = {};
             uint32_t way_idx = req.sideband.way_idx;
@@ -2470,12 +2486,12 @@ void AS_PIPE::ProcessSem(Request req)
             sem_value[0] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4];
             sem_value[1] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1];
             // analyze semaphore
-            SemVal sem_tmp = SemVal(sem_value[0] << 31 + sem_value[1]);
+            SemVal sem_tmp = SemVal((uint64_t(sem_value[0]) << 32) + sem_value[1]);;
             sem_tmp.expect_value = req.sideband.expect_value;
             sem_tmp.post_value = 0;
             sem_tmp.update_raw_val();
             // update cache
-            cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 31;
+            cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 32;
             cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
@@ -2493,7 +2509,7 @@ void AS_PIPE::ProcessSem(Request req)
             sem_value[0] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4];
             sem_value[1] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1];
             // analyze semaphore
-            SemVal sem_tmp = SemVal(sem_value[0] << 31 + sem_value[1]);
+            SemVal sem_tmp = SemVal((uint64_t(sem_value[0]) << 32) + sem_value[1]);;
             sem_tmp.post_value++;
             sem_tmp.update_raw_val();
             // resp
@@ -2511,7 +2527,7 @@ void AS_PIPE::ProcessSem(Request req)
                 sem_tmp.update_raw_val();
             }
             // update cache
-            cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 31;
+            cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 32;
             cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
             cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
@@ -2528,7 +2544,7 @@ void AS_PIPE::ProcessSem(Request req)
         sem_value[0] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4];
         sem_value[1] = cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1];
         // analyze semaphore
-        SemVal sem_tmp = SemVal(sem_value[0] << 31 + sem_value[1]);
+        SemVal sem_tmp = SemVal((uint64_t(sem_value[0]) << 32) + sem_value[1]);
         sem_tmp.wait = 1;
         sem_tmp.wait_core_id = req.sideband.rvs_id;
         sem_tmp.trans_id = req.sideband.trans_id;
@@ -2544,7 +2560,7 @@ void AS_PIPE::ProcessSem(Request req)
             sem_tmp.update_raw_val();
         }
         // update cache
-        cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 31;
+        cache[way_idx].data[bank_idx * 8 + byte_offset / 4] = sem_tmp.raw >> 32;
         cache[way_idx].data[bank_idx * 8 + byte_offset / 4 + 1] = sem_tmp.raw & 0xFFFFFFFF;
         cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4] = 0xFFFFFFFF;
         cache[way_idx].cl_mask[bank_idx * 8 + byte_offset / 4 + 1] = 0xFFFFFFFF;
@@ -2571,8 +2587,8 @@ void AS_PIPE::ProcessAtomic(Request req)
         old_val = cache[way_idx].data[data_valid_start_idx];
     }
     else if (req.sideband.data_len == 64){
-        src_val = req.payload.data[data_valid_start_idx] << 32 + req.payload.data[data_valid_start_idx + 1];
-        old_val = cache[way_idx].data[data_valid_start_idx] << 32 + cache[way_idx].data[data_valid_start_idx + 1];
+        src_val = (uint64_t(req.payload.data[data_valid_start_idx]) << 32) | req.payload.data[data_valid_start_idx + 1];
+        old_val = (uint64_t(cache[way_idx].data[data_valid_start_idx]) << 32) | cache[way_idx].data[data_valid_start_idx + 1];
     }
     // atomic operate
     switch (req.sideband.atomic_type){
@@ -2671,7 +2687,9 @@ void AS_PIPE::CacheWrRd(Request req)
             cache[way_idx].cl_mask[u] = cache[way_idx].cl_mask[u] | req.payload.mask[u];
         }
     }
-    cache[way_idx].cl_dirty = true;
+    if (req.sideband.op_type == OP_WRITE && req.sideband.master_type != MASTER_BANK){
+        cache[way_idx].cl_dirty = true;
+    }
     // resp
     if (req.sideband.master_type == MASTER_DMA){
         m_dma_rd_desc_out.write(req_out);
@@ -2694,13 +2712,8 @@ void AS_PIPE::CacheWrRd(Request req)
     // else cacheline write
 }
 
-void AS_PIPE::ProcessCache(void)
+void AS_PIPE::ProcessCache(Request req, CacheMasterType cache_master_type)
 {
-    while (m_q_arb_out.num_available() == 0)
-        wait();
-
-    Request req = {};
-    m_q_arb_out.nb_read(req);
     if (req.sideband.op_type == OP_SEM_INIT || req.sideband.op_type == OP_SEM_POST || req.sideband.op_type == OP_SEM_WAIT){
         ProcessSem(req);
     }
@@ -2709,6 +2722,30 @@ void AS_PIPE::ProcessCache(void)
     }
     else{ // read and write
         CacheWrRd(req);
+    }
+    if (cache_master_type == HIT_Q){
+        hit_q.pop();
+        cache[req.sideband.way_idx].tag_age_cnt--;
+        // event hit_q空
+        if (hit_q.empty()){
+            m_hit_q_pop_event.notify(SC_ZERO_TIME);
+        }
+    }
+    else if (cache_master_type == MISS_Q){
+        miss_q.pop();
+        cache[req.sideband.way_idx].tag_age_cnt--;
+        cache[req.sideband.way_idx].cl_miss_ref_cnt--;
+        // event hit_q空
+        if (miss_q.empty()){
+            m_miss_q_pop_event.notify(SC_ZERO_TIME);
+        }
+    }
+    else{ // flush cacheline
+        cache[req.sideband.way_idx].cl_rdy = 1;
+    }
+    // event cache unlock
+    if (cache[req.sideband.way_idx].tag_age_cnt == 0){
+        m_cache_unlock_event.notify(SC_ZERO_TIME);
     }
 }
 

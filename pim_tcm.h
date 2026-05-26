@@ -42,6 +42,7 @@
 #include <queue>
 #include <bitset>
 #include <mutex>
+#include <cstring>
 
 namespace pim_tcm
 {
@@ -466,8 +467,8 @@ public:
     , m_niu_tcm_wr_if("niu_tcm_wr_if")
     , m_niu_tcm_wrdata_if("niu_tcm_wrdata_if")
     , m_niu_tcm_rd_if("niu_tcm_rd_if")
-    , m_wr_fifo("wr_fifo")
-    , m_rd_fifo("rd_fifo")
+    , m_wr_fifo("wr_fifo", 1)
+    , m_rd_fifo("rd_fifo", 1)
     , m_niu_wr_rd_out("niu_wr_rd_out")
     , m_niu_rvc_wr_rd_out("niu_rvc_wr_rd_out")
     {
@@ -477,6 +478,8 @@ public:
         SC_THREAD(ProcessNIURd);
         sensitive << m_niu_tcm_rd_if.data_written_event();
         SC_THREAD(ProcessNIURoundRobin); 
+        sensitive << m_wr_fifo.data_written_event()
+                  << m_rd_fifo.data_written_event();
     }
 };
 
@@ -517,8 +520,8 @@ public:
     , m_rvs_tcm_kick_if("rvs_tcm_kick_if")
     , m_acc_req_if("acc_req_if")
     , m_rvs_tcm_cfi_req_if("rvs_tcm_cfi_req_if")
-    , m_wr_fifo("wr_fifo")
-    , m_rd_fifo("rd_fifo")
+    , m_wr_fifo("wr_fifo", 1)
+    , m_rd_fifo("rd_fifo", 1)
     , m_rvc_wr_rd_out("rvc_wr_rd_out")
     , m_rvc_acc_out("rvc_acc_out")
     , m_rvc_barrier_cfi_out("rvc_barrier_cfi_out")
@@ -535,6 +538,8 @@ public:
         SC_THREAD(ProcessRVCCfi);
         sensitive << m_rvs_tcm_cfi_req_if.data_written_event();
         SC_THREAD(ProcessRVCRoundRobin); 
+        sensitive << m_wr_fifo.data_written_event()
+                  << m_rd_fifo.data_written_event();
     }
 };
 
@@ -684,8 +689,6 @@ private:
     rgx_port<IF_GEN::if_vlsu_tcm_rtn>           m_vlsu2_tcm_rtn_if;
     rgx_port<IF_GEN::if_vlsu_tcm_rtn>           m_vlsu3_tcm_rtn_if;
 
-    
-
     void ProcessVLSUWr(void);
     void ProcessVLSURd(void);
 
@@ -740,10 +743,10 @@ public:
     : sc_module(module_name)
     , m_bank_niu_wr_rd_in("bank_niu_wr_rd_in")
     , m_as_niu_wr_rd_in("as_niu_wr_rd_in")
-    , m_bank_niu_wresp_fifo("bank_niu_wresp_fifo")
-    , m_as_niu_wresp_fifo("as_niu_wresp_fifo")
-    , m_bank_niu_rtn_fifo("bank_niu_rtn_fifo")
-    , m_as_niu_rtn_fifo("as_niu_rtn_fifo")
+    , m_bank_niu_wresp_fifo("bank_niu_wresp_fifo", 1)
+    , m_as_niu_wresp_fifo("as_niu_wresp_fifo", 1)
+    , m_bank_niu_rtn_fifo("bank_niu_rtn_fifo", 1)
+    , m_as_niu_rtn_fifo("as_niu_rtn_fifo", 1)
     , m_niu_tcm_wresp_if("niu_tcm_wresp_if")
     , m_niu_tcm_rtn_if("niu_tcm_rtn_if")
     , m_tcm_niu_remt_sem_if("tcm_niu_remt_sem_if")
@@ -753,7 +756,11 @@ public:
         SC_THREAD(ProcessNIUASWrRd);
         sensitive << m_as_niu_wr_rd_in.data_written_event();
         SC_THREAD(ProcessNIUWrespRoundRobin);
+        sensitive << m_bank_niu_wresp_fifo.data_written_event()
+                  << m_as_niu_wresp_fifo.data_written_event();
         SC_THREAD(ProcessNIURtnRoundRobin);
+        sensitive << m_bank_niu_rtn_fifo.data_written_event()
+                  << m_as_niu_rtn_fifo.data_written_event();
     }
 };
 
@@ -909,7 +916,7 @@ private:
     void ProcessBank(void);
     void UpdateBankBuf(void);
     void ProcessBuf(void);
-    uint8_t LaneCheck(Request req);
+    int LaneCheck(Request req);
     Request BankWrRd(Request req);
 
 public:
@@ -1003,7 +1010,7 @@ private:
             rvc_cnt = init_val;
             memset(trans_id, 0, sizeof(trans_id));
         }
-    }
+    };
 
     struct CacheLine{
         bool tag_vld = 0;
@@ -1032,9 +1039,13 @@ private:
         UNLOCK = 0x1
     };
 
-    CacheLine cache[8];
+    enum CacheMasterType{
+        HIT_Q  = 0x0,
+        MISS_Q = 0x1,
+        BANK = 0x2
+    };
 
-    SemSideband sem_sb_buf[RVC_NUM];
+    CacheLine cache[8];
     
     std::queue<Request> hit_q;
     std::queue<Request> miss_q;
@@ -1042,6 +1053,12 @@ private:
     uint8_t plsu_n[3][4] = {};
 
     BarrierSideband barrier_sb_buf[3];
+
+    sc_event m_hit_q_pop_event;
+    sc_event m_miss_q_pop_event;
+    sc_event m_cache_unlock_event;
+    sc_event m_hit_q_push_event;
+    sc_event m_miss_q_push_event;
  
     // interface among AS_PIPE, bank and MASKTER_FE
     sc_fifo_in<Request> m_dma_rd_desc_in;
@@ -1070,7 +1087,6 @@ private:
     sc_fifo<Request> m_arb1_out;
     sc_fifo<Request> m_arb3_out;
     sc_fifo<Request> m_cfi_out;
-    sc_fifo<Request> m_q_arb_out;
 
     // communication fifo among as_pipe, bank and MASTER_BE
     sc_fifo_out<Request>  m_as_wr_rd_out;
@@ -1090,7 +1106,7 @@ private:
     void HitTest(void);
     int PLSU(CacheReplaceType repl_type);
     void ProcessCacheArb(void);
-    void ProcessCache(void);
+    void ProcessCache(Request req, CacheMasterType cache_master_type);
     void ProcessSem(Request req);
     void ProcessAtomic(Request req);
     void CacheWrRd(Request req);
@@ -1113,12 +1129,11 @@ public:
     , m_rvc_barrier_cfi_in("rvc_barrier_cfi_in")
     , m_cp_wr_in("cp_wr_in")
     , m_bank_wr_in("bank_wr_in")
-    , m_niu_sem("niu_sem")
-    , m_arb2_out("arb2_out")
-    , m_arb1_out("arb1_out")
-    , m_arb3_out("arb3_out")
-    , m_cfi_out("cfi_out")
-    , m_q_arb_out("q_arb_out")
+    , m_niu_sem("niu_sem", 1)
+    , m_arb2_out("arb2_out", 1)
+    , m_arb1_out("arb1_out", 1)
+    , m_arb3_out("arb3_out", 1)
+    , m_cfi_out("cfi_out", 1)
     , m_as_wr_rd_out("as_wr_rd_out")
     , m_dma_rd_desc_out("dma_rd_desc_out")
     , m_as_niu_wr_rd_out("as_niu_wr_rd_out")
@@ -1147,8 +1162,6 @@ public:
         sensitive << m_arb3_out.data_written_event()
                   << m_cfi_out.data_written_event();
         SC_THREAD(ProcessCacheArb);
-        SC_THREAD(ProcessCache);
-        sensitive << m_q_arb_out.data_written_event();
         SC_THREAD(ProcessBarrier);
         sensitive << m_rvc_barrier_cfi_in.data_written_event();
     }
@@ -1357,50 +1370,50 @@ public:
     , m_ext_bif_cmd_if("ext_bif_cmd_if")
     , m_ext_bif_write_if("ext_bif_write_if")
     , m_ext_bif_rtn_if("ext_bif_rtn_if")
-    , m_dma_wr0_fe2bank_fifo("dma_wr0_fe2bank_fifo")
-    , m_dma_wr1_fe2bank_fifo("dma_wr1_fe2bank_fifo")
-    , m_dma_rd_data_fe2bank_fifo("dma_rd_data_fe2bank_fifo")
-    , m_dma_rd_desc_fe2as_fifo("dma_rd_desc_fe2as_fifo")
-    , m_dma_sem_fe2as_fifo("dma_sem_fe2as_fifo")
-    , m_tc_wr_fe2bank_fifo("tc_wr_fe2bank_fifo")
-    , m_tc_rd0_fe2bank_fifo("tc_rd0_fe2bank_fifo")
-    , m_tc_rd1_fe2bank_fifo("tc_rd1_fe2bank_fifo")
-    , m_tc_sem_fe2as_fifo("tc_sem_fe2as_fifo")
-    , m_vlsu0_wr_fe2bank_fifo("vlsu0_wr_fe2bank_fifo")
-    , m_vlsu1_wr_fe2bank_fifo("vlsu1_wr_fe2bank_fifo")
-    , m_vlsu2_wr_fe2bank_fifo("vlsu2_wr_fe2bank_fifo")
-    , m_vlsu3_wr_fe2bank_fifo("vlsu3_wr_fe2bank_fifo")
-    , m_vlsu0_rd_fe2bank_fifo("vlsu0_rd_fe2bank_fifo")
-    , m_vlsu1_rd_fe2bank_fifo("vlsu1_rd_fe2bank_fifo")
-    , m_vlsu2_rd_fe2bank_fifo("vlsu2_rd_fe2bank_fifo")
-    , m_vlsu3_rd_fe2bank_fifo("vlsu3_rd_fe2bank_fifo")
-    , m_vlsu0_sem_fe2as_fifo("vlsu0_sem_fe2as_fifo")
-    , m_vlsu1_sem_fe2as_fifo("vlsu1_sem_fe2as_fifo")
-    , m_vlsu2_sem_fe2as_fifo("vlsu2_sem_fe2as_fifo")
-    , m_vlsu3_sem_fe2as_fifo("vlsu3_sem_fe2as_fifo")
-    , m_niu_wr_rd_fe2bank_fifo("niu_wr_rd_fe2bank_fifo")
-    , m_niu_rvc_wr_rd_fe2as_fifo("niu_rvc_wr_rd_fe2as_fifo")
-    , m_rvc_wr_rd_fe2as_fifo("rvc_wr_rd_fe2as_fifo")
-    , m_rvc_acc_fe2as_fifo("rvc_acc_fe2as_fifo")
-    , m_rvc_barrier_cfi_fe2as_fifo("rvc_barrier_cfi_fe2as_fifo")
-    , m_cp_fe2as_fifo("cp_fe2as_fifo")
-    , m_dma_wr0_bank2be_fifo("dma_wr0_bank2be_fifo")
-    , m_dma_wr1_bank2be_fifo("dma_wr1_bank2be_fifo")
-    , m_dma_rd_data_bank2be_fifo("dma_rd_data_bank2be_fifo")
-    , m_tc_wr_bank2be_fifo("tc_wr_bank2be_fifo")
-    , m_tc_b_rd0_bank2be_fifo("tc_b_rd0_bank2be_fifo")
-    , m_tc_b_rd1_bank2be_fifo("tc_b_rd1_bank2be_fifo")
-    , m_tc_mix_rd_bank2be_fifo("tc_mix_rd_bank2be_fifo")
-    , m_vlsu_wr_bank2be_fifo("vlsu_wr_bank2be_fifo")
-    , m_vlsu_rd_bank2be_fifo("vlsu_rd_bank2be_fifo")
-    , m_niu_wr_rd_bank2be_fifo("niu_wr_rd_bank2be_fifo")
-    , m_as_rd_bank2as_fifo("as_rd_bank2as_fifo")
-    , m_as_wr_rd_as2bank_fifo("as_wr_rd_as2bank_fifo")
-    , m_dma_rd_desc_as2be_fifo("dma_rd_desc_as2be_fifo")
-    , m_niu_wr_rd_as2be_fifo("niu_wr_rd_as2be_fifo")
-    , m_rvc_as2be_fifo("rvc_as2be_fifo")
-    , m_cfi_as2be_fifo("cfi_as2be_fifo")
-    , m_cp_as2be_fifo("cp_as2be_fifo")
+    , m_dma_wr0_fe2bank_fifo("dma_wr0_fe2bank_fifo", 1)
+    , m_dma_wr1_fe2bank_fifo("dma_wr1_fe2bank_fifo", 1)
+    , m_dma_rd_data_fe2bank_fifo("dma_rd_data_fe2bank_fifo", 1)
+    , m_dma_rd_desc_fe2as_fifo("dma_rd_desc_fe2as_fifo", 1)
+    , m_dma_sem_fe2as_fifo("dma_sem_fe2as_fifo", 1)
+    , m_tc_wr_fe2bank_fifo("tc_wr_fe2bank_fifo", 1)
+    , m_tc_rd0_fe2bank_fifo("tc_rd0_fe2bank_fifo", 1)
+    , m_tc_rd1_fe2bank_fifo("tc_rd1_fe2bank_fifo", 1)
+    , m_tc_sem_fe2as_fifo("tc_sem_fe2as_fifo", 1)
+    , m_vlsu0_wr_fe2bank_fifo("vlsu0_wr_fe2bank_fifo", 1)
+    , m_vlsu1_wr_fe2bank_fifo("vlsu1_wr_fe2bank_fifo", 1)
+    , m_vlsu2_wr_fe2bank_fifo("vlsu2_wr_fe2bank_fifo", 1)
+    , m_vlsu3_wr_fe2bank_fifo("vlsu3_wr_fe2bank_fifo", 1)
+    , m_vlsu0_rd_fe2bank_fifo("vlsu0_rd_fe2bank_fifo", 1)
+    , m_vlsu1_rd_fe2bank_fifo("vlsu1_rd_fe2bank_fifo", 1)
+    , m_vlsu2_rd_fe2bank_fifo("vlsu2_rd_fe2bank_fifo", 1)
+    , m_vlsu3_rd_fe2bank_fifo("vlsu3_rd_fe2bank_fifo", 1)
+    , m_vlsu0_sem_fe2as_fifo("vlsu0_sem_fe2as_fifo", 1)
+    , m_vlsu1_sem_fe2as_fifo("vlsu1_sem_fe2as_fifo", 1)
+    , m_vlsu2_sem_fe2as_fifo("vlsu2_sem_fe2as_fifo", 1)
+    , m_vlsu3_sem_fe2as_fifo("vlsu3_sem_fe2as_fifo", 1)
+    , m_niu_wr_rd_fe2bank_fifo("niu_wr_rd_fe2bank_fifo", 1)
+    , m_niu_rvc_wr_rd_fe2as_fifo("niu_rvc_wr_rd_fe2as_fifo", 1)
+    , m_rvc_wr_rd_fe2as_fifo("rvc_wr_rd_fe2as_fifo", 1)
+    , m_rvc_acc_fe2as_fifo("rvc_acc_fe2as_fifo", 1)
+    , m_rvc_barrier_cfi_fe2as_fifo("rvc_barrier_cfi_fe2as_fifo", 1)
+    , m_cp_fe2as_fifo("cp_fe2as_fifo", 1)
+    , m_dma_wr0_bank2be_fifo("dma_wr0_bank2be_fifo", 1)
+    , m_dma_wr1_bank2be_fifo("dma_wr1_bank2be_fifo", 1)
+    , m_dma_rd_data_bank2be_fifo("dma_rd_data_bank2be_fifo", 1)
+    , m_tc_wr_bank2be_fifo("tc_wr_bank2be_fifo", 1)
+    , m_tc_b_rd0_bank2be_fifo("tc_b_rd0_bank2be_fifo", 1)
+    , m_tc_b_rd1_bank2be_fifo("tc_b_rd1_bank2be_fifo", 1)
+    , m_tc_mix_rd_bank2be_fifo("tc_mix_rd_bank2be_fifo", 1)
+    , m_vlsu_wr_bank2be_fifo("vlsu_wr_bank2be_fifo", 1)
+    , m_vlsu_rd_bank2be_fifo("vlsu_rd_bank2be_fifo", 1)
+    , m_niu_wr_rd_bank2be_fifo("niu_wr_rd_bank2be_fifo", 1)
+    , m_as_rd_bank2as_fifo("as_rd_bank2as_fifo", 1)
+    , m_as_wr_rd_as2bank_fifo("as_wr_rd_as2bank_fifo", 1)
+    , m_dma_rd_desc_as2be_fifo("dma_rd_desc_as2be_fifo", 1)
+    , m_niu_wr_rd_as2be_fifo("niu_wr_rd_as2be_fifo", 1)
+    , m_rvc_as2be_fifo("rvc_as2be_fifo", 1)
+    , m_cfi_as2be_fifo("cfi_as2be_fifo", 1)
+    , m_cp_as2be_fifo("cp_as2be_fifo", 1)
     , m_dma_fe("dma_fe")
     , m_tc_fe("tc_fe")
     , m_rvv_fe("rvv_fe")

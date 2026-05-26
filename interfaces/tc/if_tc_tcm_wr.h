@@ -3,27 +3,6 @@
 
 namespace IF_GEN
 {
-
-struct TCWriteField
-{
-    uint32_t addr : 21;      // TCM byte address, must not cross 128-byte boundary.
-    uint32_t data[32];       // 1024 bits data.
-    uint8_t  instr_last : 1; // 1: last burst of instruction.
-};
-
-struct TCSemField
-{
-    uint32_t addr : 21;      // Semaphore address.
-    uint8_t  num  : 2;       // Number of semaphores for continuous operation.
-    uint8_t  instr_last : 1; // 1: last burst of instruction.
-};
-
-union TCWrInfoUnion
-{
-    TCWriteField write;
-    TCSemField   sem;
-};
-
 struct if_tc_tcm_wr
 {
     dbgtag_t debug_tag;
@@ -32,7 +11,25 @@ struct if_tc_tcm_wr
     uint8_t rvs_core_id : 3; // RVS core id.
     uint8_t instr_id    : 4; // Instruction id.
 
-    TCWrInfoUnion wr_sem_union;
+    union wr_info_union
+    {
+        struct write
+        {
+            uint32_t addr : 21;      // TCM byte address, must not cross 128-byte boundary.
+            uint32_t data[32];       // 1024 bits data.
+            uint8_t  instr_last : 1; // 1: last burst of instruction.
+        };
+        write write_data;
+        struct sem_post
+        {
+            uint32_t addr : 21;      // Semaphore address.
+            uint8_t  num  : 2;       // Number of semaphores for continuous operation.
+            uint8_t  instr_last : 1; // 1: last burst of instruction.
+        };
+        sem_post sem_post_data;
+    };
+
+    wr_info_union wr_info_union_data;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {
@@ -48,20 +45,20 @@ struct if_tc_tcm_wr
 
         if(op == 1)
         {
-            outfile << " (addr) = 0x" << std::hex << wr_sem_union.write.addr;
-
+            outfile << " (addr) = 0x" << std::hex << wr_info_union_data.write_data.addr;
+            
             for(uint32_t u = 0; u < 32; u++)
             {
-                outfile << " (data" << u << ") = 0x" << std::hex << wr_sem_union.write.data[u];
+                outfile << " (data" << u << ") = 0x" << std::hex << wr_info_union_data.write_data.data[u];
             }
 
-            outfile << " (instr_last) = 0x" << std::hex << wr_sem_union.write.instr_last;
+            outfile << " (instr_last) = 0x" << std::hex << wr_info_union_data.write_data.instr_last;
         }
         else if(op == 2)
         {
-            outfile << " (addr) = 0x" << std::hex << wr_sem_union.sem.addr;
-            outfile << " (num) = 0x"  << std::hex << wr_sem_union.sem.num;
-            outfile << " (instr_last) = 0x" << std::hex << wr_sem_union.sem.instr_last;
+            outfile << " (addr) = 0x" << std::hex << wr_info_union_data.sem_post_data.addr;
+            outfile << " (num) = 0x"  << std::hex << wr_info_union_data.sem_post_data.num;
+            outfile << " (instr_last) = 0x" << std::hex << wr_info_union_data.sem_post_data.instr_last;
         }
 
         outfile << std::endl;
@@ -77,20 +74,20 @@ struct if_tc_tcm_wr
 
         if(req.op == 1)
         {
-            os << req.wr_sem_union.write.addr << " ";
+            os << req.wr_info_union_data.write_data.addr << " ";
 
             for(uint32_t u = 0; u < 32; u++)
             {
-                os << req.wr_sem_union.write.data[u] << " ";
+                os << req.wr_info_union_data.write_data.data[u] << " ";
             }
 
-            os << req.wr_sem_union.write.instr_last << " ";
+            os << req.wr_info_union_data.write_data.instr_last << " ";
         }
         else if(req.op == 2)
         {
-            os << req.wr_sem_union.sem.addr << " ";
-            os << req.wr_sem_union.sem.num << " ";
-            os << req.wr_sem_union.sem.instr_last << " ";
+            os << req.wr_info_union_data.sem_post_data.addr << " ";
+            os << req.wr_info_union_data.sem_post_data.num << " ";
+            os << req.wr_info_union_data.sem_post_data.instr_last << " ";
         }
 
         return os;

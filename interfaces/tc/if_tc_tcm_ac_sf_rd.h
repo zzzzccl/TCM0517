@@ -3,43 +3,6 @@
 
 namespace IF_GEN
 {
-
-struct MatrixAField
-{
-    uint32_t addr      : 21; // TCM byte address.
-    uint8_t  burst_len : 2;  // Burst len, always 0~3.
-    uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
-};
-
-struct MatrixSaField
-{
-    uint32_t addr      : 21; // TCM byte address.
-    uint8_t  burst_len : 2;  // Burst len, always 0.
-    uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, supports 4'h1/2/3/4/8/C/F.
-};
-
-struct MatrixCField
-{
-    uint32_t addr      : 21; // TCM byte address.
-    uint8_t  burst_len : 2;  // Burst len, always 0~3.
-    uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
-};
-
-struct MatrixSbField
-{
-    uint32_t addr      : 21; // TCM byte address.
-    uint8_t  burst_len : 2;  // Burst len, 1 or 3.
-    uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
-};
-
-union TCSrcInfoUnion
-{
-    MatrixAField  matrix_a;
-    MatrixSaField matrix_sa;
-    MatrixCField  matrix_c;
-    MatrixSbField matrix_sb;
-};
-
 struct if_tc_tcm_ac_sf_rd
 {
     dbgtag_t debug_tag;
@@ -49,7 +12,38 @@ struct if_tc_tcm_ac_sf_rd
     uint8_t buf_inx     : 5; // Credit buffer start index.
     uint8_t matrix_src  : 2; // 0: A; 1: C; 2: SF_A; 3: SF_B.
 
-    TCSrcInfoUnion SrcInfoUnion;
+    union src_info_union
+    {
+        struct matrix_a
+        {
+            uint32_t addr      : 21; // TCM byte address.
+            uint8_t  burst_len : 2;  // Burst len, always 0~3.
+            uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
+        };
+        matrix_a matrix_a_data;
+        struct matrix_sa
+        {
+            uint32_t addr      : 21; // TCM byte address.
+            uint8_t  burst_len : 2;  // Burst len, always 0.
+            uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, supports 4'h1/2/3/4/8/C/F.
+        };
+        matrix_sa matrix_sa_data;
+        struct matrix_c
+        {
+            uint32_t addr      : 21; // TCM byte address.
+            uint8_t  burst_len : 2;  // Burst len, always 0~3.
+            uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
+        };
+        matrix_c matrix_c_data;
+        struct matrix_sb
+        {
+            uint32_t addr      : 21; // TCM byte address.
+            uint8_t  burst_len : 2;  // Burst len, 1 or 3.
+            uint8_t  grp_mask  : 4;  // 1 bit maps to 32-byte address, only 4'hF supported.
+        };
+        matrix_sb matrix_sb_data;
+    };
+    src_info_union src_info_union_data;
 
     void printInterface(std::ofstream& outfile, uint32_t portId) const
     {
@@ -66,19 +60,19 @@ struct if_tc_tcm_ac_sf_rd
 
         if(matrix_src == 0)
         {
-            printMatrixField(outfile, SrcInfoUnion.matrix_a);
+            printMatrixField(outfile, src_info_union_data.matrix_a_data);
         }
         else if(matrix_src == 1)
         {
-            printMatrixField(outfile, SrcInfoUnion.matrix_c);
+            printMatrixField(outfile, src_info_union_data.matrix_c_data);
         }
         else if(matrix_src == 2)
         {
-            printMatrixField(outfile, SrcInfoUnion.matrix_sa);
+            printMatrixField(outfile, src_info_union_data.matrix_sa_data);
         }
         else if(matrix_src == 3)
         {
-            printMatrixField(outfile, SrcInfoUnion.matrix_sb);
+            printMatrixField(outfile, src_info_union_data.matrix_sb_data);
         }
 
         outfile << std::endl;
@@ -95,19 +89,19 @@ struct if_tc_tcm_ac_sf_rd
 
         if(req.matrix_src == 0)
         {
-            streamMatrixField(os, req.SrcInfoUnion.matrix_a);
+            streamMatrixField(os, req.src_info_union_data.matrix_a_data);
         }
         else if(req.matrix_src == 1)
         {
-            streamMatrixField(os, req.SrcInfoUnion.matrix_c);
+            streamMatrixField(os, req.src_info_union_data.matrix_c_data);
         }
         else if(req.matrix_src == 2)
         {
-            streamMatrixField(os, req.SrcInfoUnion.matrix_sa);
+            streamMatrixField(os, req.src_info_union_data.matrix_sa_data);
         }
         else if(req.matrix_src == 3)
         {
-            streamMatrixField(os, req.SrcInfoUnion.matrix_sb);
+            streamMatrixField(os, req.src_info_union_data.matrix_sb_data);
         }
 
         return os;
