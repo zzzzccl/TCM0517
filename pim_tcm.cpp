@@ -146,6 +146,7 @@ void DMA_FE::ProcessDMARdDesc(void)
         Request req_out = {};
         sb.master_type = MASTER_DMA;
         sb.op_type = OP_READ;
+        sb.debug_tag = req_in.debug_tag;
         sb.addr = TCMAddress(req_in.addr);
         sb.cl_id = req_in.cl_id;
         sb.burst_len = 3;
@@ -156,7 +157,7 @@ void DMA_FE::ProcessDMARdDesc(void)
             sb.addr.update_raw_addr();
             Payload pl = {};
             for (uint32_t i = 0; i < 8; i++){
-                pl.mask[u * 8 + i] = 1;
+                pl.mask[u * 8 + i] = 0xFFFFFFFF;
             }
             req_out.sideband = sb;
             req_out.payload = pl;
@@ -1466,7 +1467,7 @@ void RVC_BE::ProcessRVCWrRd(void)
             IF_GEN::if_rvs_tcm_r req_out = {};
             req_out.id = req_in.sideband.id;
             req_out.resp = 0;
-            req_out.last = req_in.sideband.instr_last;
+            req_out.last = 1;
             uint32_t bank_idx = req_in.sideband.addr.bank_index;
             for (uint32_t u = 0; u < 8; u++){
                 req_out.data[u] = req_in.payload.data[bank_idx * 8 + u]; 
@@ -1481,7 +1482,7 @@ void RVC_BE::ProcessRVCWrRd(void)
 
             m_rvs_tcm_b_if.write(req_b_out);
 
-            IF_GEN::if_rvs_tcm_r req_r_out;
+            IF_GEN::if_rvs_tcm_r req_r_out = {};
             req_r_out.id = req_in.sideband.id;
             req_r_out.resp = 0;
             req_r_out.last = 1;
@@ -2241,26 +2242,32 @@ void AS_PIPE::HitTest(void)
                 std::queue<Request> fifo_tmp;
                 // sem num cross 1Kbit boundary process
                 if (req_in.sideband.op_type == OP_SEM_INIT || req_in.sideband.op_type == OP_SEM_POST){
-                    uint32_t sem_num = req_in.sideband.sem_num;
+                    uint32_t sem_num = req_in.sideband.sem_num + 1;
                     uint32_t bank_idx = req_in.sideband.addr.bank_index;
                     uint32_t byte_offset = req_in.sideband.addr.byte_offset;
                     uint32_t lane_idx = req_in.sideband.addr.lane_index;
                     if (bank_idx == 3 && (byte_offset + sem_num * 8 > 32)){
                         uint32_t sem_num1 = (32 - byte_offset) / 8;
                         uint32_t sem_num2 = sem_num - sem_num1;
-                        req_in.sideband.sem_num = sem_num1;
+                        req_in.sideband.sem_num = sem_num1 - 1;// sem num minus 1
                         fifo_tmp.push(req_in);
 
-                        req_in.sideband.sem_num = sem_num2;
-                        if (lane_idx == 7){
-                            req_in.sideband.addr.row_index++;
-                            req_in.sideband.addr.lane_index = 0;
+                        req_in.sideband.sem_num = sem_num2 - 1;
+                        if (bank_idx == 3){
+                            req_in.sideband.addr.bank_index = 0;
+                            if (lane_idx == 7){
+                                req_in.sideband.addr.lane_index = 0;
+                                req_in.sideband.addr.row_index++;
+                            }
+                            else{
+                                req_in.sideband.addr.lane_index++;
+                            }
                         }
                         else{
-                            req_in.sideband.addr.lane_index++;
+                            req_in.sideband.addr.bank_index++;
                         }
-                        req_in.sideband.addr.bank_index = 0;
                         req_in.sideband.addr.byte_offset = 0;
+
                         req_in.sideband.addr.update_raw_addr();
                         fifo_tmp.push(req_in);
                     }
@@ -2411,6 +2418,7 @@ void AS_PIPE::ProcessBarrier(void)
         else if (req_in.sideband.op_type == OP_BARRIER_INIT){
             for (uint32_t u = 0; u < 3; u++){
                 barrier_sb_buf[u].init_val = 0;
+                barrier_sb_buf[u].rvs_active_mask = req_in.sideband.rvs_active_mask;
             }
             for (uint32_t u = 0; u < 8; u++){
                 uint8_t mask_value = (req_in.sideband.rvs_active_mask >> (7 - u)) & 0x1;
@@ -2436,9 +2444,11 @@ void AS_PIPE::ProcessBarrier(void)
                     barrier_sb_buf[0].trans_id[rvs_id] = trans_id;
                     if (barrier_sb_buf[0].rvc_cnt == 0){
                         for (uint32_t u = 0; u < 8; u++){
-                            req_out.sideband.trans_id = barrier_sb_buf[0].trans_id[u];
-                            req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_out);
+                            if (((barrier_sb_buf[0].rvs_active_mask >> (7 - u)) & 0x1) == 1){
+                                req_out.sideband.trans_id = barrier_sb_buf[0].trans_id[u];
+                                req_out.sideband.rvs_id = u;
+                                m_as_rvc_out.write(req_out);
+                            }
                         }
                         barrier_sb_buf[0].reset();
                     }
@@ -2448,9 +2458,11 @@ void AS_PIPE::ProcessBarrier(void)
                     barrier_sb_buf[1].trans_id[rvs_id] = trans_id;
                     if (barrier_sb_buf[1].rvc_cnt == 0){
                         for (uint32_t u = 0; u < 4; u++){
-                            req_out.sideband.trans_id = barrier_sb_buf[1].trans_id[u];
-                            req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_out);
+                            if (((barrier_sb_buf[1].rvs_active_mask >> (7 - u)) & 0x1) == 1){
+                                req_out.sideband.trans_id = barrier_sb_buf[1].trans_id[u];
+                                req_out.sideband.rvs_id = u;
+                                m_as_rvc_out.write(req_out);
+                            }
                         }
                         barrier_sb_buf[1].reset();
                     }
@@ -2460,9 +2472,11 @@ void AS_PIPE::ProcessBarrier(void)
                     barrier_sb_buf[2].trans_id[rvs_id] = trans_id;
                     if (barrier_sb_buf[2].rvc_cnt == 0){
                         for (uint32_t u = 4; u < 8; u++){
-                            req_out.sideband.trans_id = barrier_sb_buf[2].trans_id[u];
-                            req_out.sideband.rvs_id = u;
-                            m_as_rvc_out.write(req_out);
+                            if (((barrier_sb_buf[2].rvs_active_mask >> (7 - u)) & 0x1) == 1){
+                                req_out.sideband.trans_id = barrier_sb_buf[2].trans_id[u];
+                                req_out.sideband.rvs_id = u;
+                                m_as_rvc_out.write(req_out);
+                            }
                         }
                         barrier_sb_buf[2].reset();
                     }
@@ -2478,7 +2492,7 @@ void AS_PIPE::ProcessSem(Request req)
 {
     uint32_t sem_num = req.sideband.sem_num;
     if (req.sideband.op_type == OP_SEM_INIT){
-        for (uint32_t u = 0; u < sem_num; u++){
+        for (uint32_t u = 0; u <= sem_num; u++){
             uint32_t sem_value[2] = {};
             uint32_t way_idx = req.sideband.way_idx;
             uint32_t bank_idx = req.sideband.addr.bank_index;
@@ -2501,7 +2515,7 @@ void AS_PIPE::ProcessSem(Request req)
         }
     }
     else if (req.sideband.op_type == OP_SEM_POST){
-        for (uint32_t u = 0; u < sem_num; u++){
+        for (uint32_t u = 0; u <= sem_num; u++){
             uint32_t sem_value[2] = {};
             uint32_t way_idx = req.sideband.way_idx;
             uint32_t bank_idx = req.sideband.addr.bank_index;

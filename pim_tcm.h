@@ -178,7 +178,7 @@ struct Sideband {
     BarrierGroupType barrier_group;
     //sem
     uint8_t sem_num;
-    uint8_t expect_value;
+    uint32_t expect_value;
     uint8_t wait_core_id;
     //atomic
     AtomicType atomic_type;
@@ -868,7 +868,7 @@ private:
 
     uint8_t lanemask[8] = {1,1,1,1,1,1,1,1};
 
-    uint32_t storage[BANK_ROW_NUM][BANK_LANE_NUM][BANK_BANK_NUM][BANK_BYTE_NUM / 32];
+    uint32_t storage[BANK_ROW_NUM][BANK_LANE_NUM][BANK_BANK_NUM][BANK_BYTE_NUM / 32] = {};
 
     uint8_t rr_rvv_w = 0;
     uint8_t rr_rvv_r = 0;
@@ -965,7 +965,8 @@ public:
                   << m_vlsu1_rd_in.data_written_event()
                   << m_vlsu2_rd_in.data_written_event()
                   << m_vlsu3_rd_in.data_written_event()
-                  << m_niu_wr_rd_in.data_written_event();
+                  << m_niu_wr_rd_in.data_written_event()
+                  << m_as_wr_rd_in.data_written_event();
     }
 };
 
@@ -1005,6 +1006,7 @@ private:
         uint8_t init_val = 0;
         uint8_t rvc_cnt = 0;
         uint8_t trans_id[8] = {};
+        uint8_t rvs_active_mask = 0;
 
         void reset(){
             rvc_cnt = init_val;
